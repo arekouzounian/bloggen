@@ -13,7 +13,6 @@ A blogging framework.
 - Blog upload listener 
 - CLI Tool 
 
-
 #### Proposed Stack 
 - Apache Webserver 
 - [Yew](https://github.com/yewstack/yew) for frontend 
@@ -29,4 +28,3 @@ A blogging framework.
   - Since the primary way of uploading blog posts is predicated upon a CLI tool and markdown, the tool could be extended to have a web frontend
   - WYSIWYG, web-based editor to create blog posts 
   - would likely require authentication and introduce security vulnerabilities, so this is an idea yet to be fully explored 
-
