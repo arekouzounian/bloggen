@@ -2,6 +2,7 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 
 use crate::components::pagination::{PageQuery, Pagination};
+use crate::components::post_card::PostCard;
 use crate::Route;
 
 const ITEMS_PER_PAGE: u64 = 10;
@@ -52,29 +53,39 @@ impl Component for PostList {
         html! {
             <div class="section container">
                 <h1 class="title">{ "Posts" }</h1>
-                <h2 class="subtitle">{ "this is just a copy-paste procedure" }</h2>
+                <h2 class="subtitle">{ "All of our quality writing in one place" }</h2>
                 { self.view_posts(ctx) }
                 <Pagination
                     {page}
                     total_pages={TOTAL_PAGES}
                     route_to_page={Route::Posts}
                 />
-
             </div>
         }
     }
 }
-
 impl PostList {
     fn view_posts(&self, _ctx: &Context<Self>) -> Html {
-        // code to view all posts goes here
-        // in the demo they populate with seeds
-        // in this case, we want to grab posts by their IDs presumably
-
-        // placeholder
+        let start_seed = (self.page - 1) * ITEMS_PER_PAGE;
+        let mut cards = (0..ITEMS_PER_PAGE).map(|seed_offset| {
+            html! {
+                <li class="list-item mb-5">
+                    <PostCard seed={start_seed + seed_offset} />
+                </li>
+            }
+        });
         html! {
-            <div>
-                {"Posts should go here!"}
+            <div class="columns">
+                <div class="column">
+                    <ul class="list">
+                        { for cards.by_ref().take(ITEMS_PER_PAGE as usize / 2) }
+                    </ul>
+                </div>
+                <div class="column">
+                    <ul class="list">
+                        { for cards }
+                    </ul>
+                </div>
             </div>
         }
     }

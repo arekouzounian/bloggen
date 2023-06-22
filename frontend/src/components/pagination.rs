@@ -24,7 +24,7 @@ impl Component for Pagination {
     type Message = ();
     type Properties = Props;
 
-    fn create(ctx: &Context<Self>) -> Self {
+    fn create(_ctx: &Context<Self>) -> Self {
         Self
     }
 
@@ -39,7 +39,6 @@ impl Component for Pagination {
         }
     }
 }
-
 impl Pagination {
     fn render_link(&self, to_page: u64, props: &Props) -> Html {
         let Props {
@@ -96,14 +95,15 @@ impl Pagination {
         let pages_next = (total_pages - page) as usize;
 
         let links_left = LINKS_PER_SIDE.min(pages_prev)
+            // if there are less than `LINKS_PER_SIDE` to the right, we add some more on the left.
             + LINKS_PER_SIDE.checked_sub(pages_next).unwrap_or_default();
         let links_right = 2 * LINKS_PER_SIDE - links_left;
 
         html! {
             <>
-                {self.render_links(1..page, pages_prev, links_left, props)}
+                { self.render_links(1..page, pages_prev, links_left, props) }
                 <li>{ self.render_link(page, props) }</li>
-                {self.render_links(page + 1..=total_pages, pages_next, links_right, props)}
+                { self.render_links(page + 1..=total_pages, pages_next, links_right, props) }
             </>
         }
     }
