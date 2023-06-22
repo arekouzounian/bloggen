@@ -1,30 +1,13 @@
 # bloggen 
-A blogging framework.
+--- 
+A simplified blogging framework for personal use. 
 
-### Idea
-- write blogs in markdown locally 
-- use CLI tool to send new blog posts to server, converted into HTML
-- server (dockerized) listens for connections and directs the files accordingly 
-- blog is served using apache or similar webserver software 
-- Due to containerization, can be duplicated easily 
+The rough ideas for the project can be found in [the idea doc](./idea-doc.md), where I initially put my ideas for the project. 
 
-### Components
-- Webserver/Frontend
-- Blog upload listener 
-- CLI Tool 
+This framework is intended to allow one to set-up and add to a simple web-based blog quickly. The idea is to write blog posts in markdown, and have a set of tools and software communicating with each other to allow quick, painless blog post uploading to a central server. 
 
-#### Proposed Stack 
-- Apache Webserver 
-- [Yew](https://github.com/yewstack/yew) for frontend 
-- Rust upload listener 
-- Go CLI Tool (Cobra)
+The goal was for these tools to be developed for my own personal blog, but a secondary goal is to allow this set of tools to be configurable in such a way that anyone could use this to deploy their own personal blog. 
 
-#### Extended Ideas
-- CLI Tool additions:
-  - delete post
-  - download all posts
-  - modify post 
-- Other frontends
-  - Since the primary way of uploading blog posts is predicated upon a CLI tool and markdown, the tool could be extended to have a web frontend
-  - WYSIWYG, web-based editor to create blog posts 
-  - would likely require authentication and introduce security vulnerabilities, so this is an idea yet to be fully explored 
+The web-based frontend will be housed in the [frontend folder](./frontend/), the command-line interface code will be in [the cli folder](./cli/), and  server-side code doesn't exist quite yet, but will likely be stashed away under some future folder. 
+
+I will also be creating blog posts about the process of creating the blogging framework (chicken or egg? take your pick); to that end, the [initial posts](./initial-posts/) folder houses these blog posts. 
