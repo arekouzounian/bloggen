@@ -16,3 +16,15 @@ One major concern going forward is security--if I just make the daemon listen th
 - [Useful so - systemd](https://stackoverflow.com/questions/61443052/rust-daemon-best-practices)
 - [Systemd spec/reference](https://www.freedesktop.org/software/systemd/man/daemon.html)
 - [Rust ssh package](https://docs.rs/ssh/latest/ssh/)
+
+Idea: 
+- simple http file transfer by default 
+- the server can have a certificate file configured such as to allow https file transfer 
+- the idea is that the use case for this project is to be 'plugged-in' to an already existing website. If the website already has a certificate for HTTPS then it can be used by this software for secure https transfer. 
+  - [This is an example](https://github.com/rustls/hyper-rustls/blob/main/examples/server.rs) HTTPS server using a rust library that supports HTTPS 
+
+
+Later Edit: 
+So after some thought it really seems like HTTPS/relying on the target server having an SSL certificate is the best idea. And using SSH as an underlying encryption method is still viable, but the main security problem isn't encrypted data transfer, but rather the ability for a malicious actor to connect to the server and upload files without any verification. 
+
+I think for the time being, since my research into encryption and best practices has brought progress to a grinding halt, what I will instead do is focus on making a non-secure MVP which just uses simple, unprotected/unauthenticated TCP sockets to transfer the files. Once that is done, I can extend it with security options like using a password, asymmetric encryption, etc. (check ssh known_hosts, or keep track of its own registered hosts?)
