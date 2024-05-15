@@ -4,13 +4,14 @@ Copyright © 2023 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"bufio"
 	"fmt"
-	"net"
+	"log"
+	"os"
 
 	// "net"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 )
 
 // testCmd represents the test command
@@ -23,34 +24,64 @@ var testCmd = &cobra.Command{
 			fmt.Println("Missing argument: port number")
 			return
 		}
+		port := args[0]
 
-		target, err := cmd.Flags().GetString("target")
+		server, err := cmd.Flags().GetString("target")
 		if err != nil {
 			fmt.Println("Error getting target flag")
 			return
 		}
 
-		host := target + ":" + args[0]
-		conn, err := net.Dial("tcp", host)
+		key, err := os.ReadFile("/Users/arekouzounian/.ssh/id_rsa")
 		if err != nil {
-			fmt.Printf("Error dialing connection at %s\n", host)
-			return
+			log.Fatalf("unable to read private key: %v", err)
 		}
 
-		reader := bufio.NewReader(conn)
-		for {
-			str, err := reader.ReadString('\n')
-			if err != nil {
-				fmt.Println("Connection shutdown")
-				break
-			}
-
-			if len(str) > 0 {
-				fmt.Println(str)
-			}
+		// Create the Signer for this private key.
+		signer, err := ssh.ParsePrivateKey(key)
+		if err != nil {
+			log.Fatalf("unable to parse private key: %v", err)
 		}
+
+		config := &ssh.ClientConfig{
+			Auth: []ssh.AuthMethod{
+				ssh.PublicKeys(signer),
+			},
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		}
+
+		// Connect to SSH server
+		conn, err := ssh.Dial("tcp", fmt.Sprintf("%s:%s", server, port), config)
+		if err != nil {
+			log.Fatalf("Failed to connect to SSH server: %v", err)
+		}
+		defer conn.Close()
+
+		// Create new SSH session
+		session, err := conn.NewSession()
+		if err != nil {
+			log.Fatalf("Failed to create SSH session: %v", err)
+		}
+		defer session.Close()
+
+		pipe, err := session.StdinPipe()
+		if err != nil {
+			log.Fatalf("Failed to create stdin pipe: %v", err)
+		}
+
+		fmt.Fprintf(pipe, "asdfasdfasdfas")
 	},
 }
+
+// func callback(hostname string, remote net.Addr, key ssh.PublicKey) error {
+
+// 	// ip_addr := strings.Split(remote.String(), ":")[0]
+
+// 	// if ip_addr != "127.0.0.1" {
+// 	// 	return errors.New("FUCK YOU!!!! LOCALHOST ONLY")
+// 	// }
+// 	return nil
+// }
 
 func init() {
 	rootCmd.AddCommand(testCmd)

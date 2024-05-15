@@ -6,3 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0.83"
+async-trait = "0.1.80"
+russh = {version="0.43.0", features=["openssl"]}
+russh-keys = "0.43.0"
+tokio = "1.37.0"
