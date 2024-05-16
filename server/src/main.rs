@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -40,14 +42,14 @@ struct Server {
 }
 
 impl Server {
-    async fn post(&mut self, data: CryptoVec) {
-        let mut clients = self.clients.lock().await;
-        for ((id, channel), ref mut s) in clients.iter_mut() {
-            if *id != self.id {
-                let _ = s.data(*channel, data.clone()).await;
-            }
-        }
-    }
+    // async fn post(&mut self, data: CryptoVec) {
+    //     let mut clients = self.clients.lock().await;
+    //     for ((id, channel), ref mut s) in clients.iter_mut() {
+    //         if *id != self.id {
+    //             let _ = s.data(*channel, data.clone()).await;
+    //         }
+    //     }
+    // }
 }
 
 impl server::Server for Server {
@@ -86,27 +88,32 @@ impl server::Handler for Server {
         Ok(())
     }
 
-    // async fn auth_publickey(
-    //     &mut self,
-    //     user: &str,
-    //     public_key: &key::PublicKey,
-    // ) -> Result<server::Auth, Self::Error> {
-    //     println!("credentials: {}, {:?}", user, public_key);
-    //     Ok(server::Auth::Accept)
-    // }
-
     async fn auth_publickey(
         &mut self,
-        user: &str,
-        public_key: &key::PublicKey,
+        _: &str,
+        pkey: &key::PublicKey,
     ) -> Result<server::Auth, Self::Error> {
-        println!("credentials: {}, {:?}", user, public_key);
-        match public_key {
-            key::PublicKey::Ed25519(ref key) => println!("Received Ed25519 key: {:?}", key),
-            key::PublicKey::RSA { ref key, ref hash } => println!("Received RSA key: {:?}", hash),
-            _ => println!("Received other key type"),
+        let auth_file = "/Users/arekouzounian/.ssh/authorized_keys";
+        let file = File::open(auth_file)?;
+        let buf_reader = BufReader::new(file);
+
+        for line in buf_reader.lines().map(|l| l.unwrap()) {
+            let b64: Vec<&str> = line.split(' ').collect();
+            if b64.len() < 3 {
+                continue;
+            }
+
+            let key = russh_keys::parse_public_key_base64(&b64[1])?;
+
+            if key.eq(pkey) {
+                println!("they equal");
+                return Ok(server::Auth::Accept);
+            }
         }
-        Ok(server::Auth::Accept)
+
+        Ok(server::Auth::Reject {
+            proceed_with_methods: None,
+        })
     }
 
     async fn data(
@@ -123,6 +130,9 @@ impl server::Handler for Server {
             channel,
             String::from_utf8_lossy(data)
         );
+        // let resp = CryptoVec::from(String::from("msg received"));
+
+        // session.data(channel, resp);
         Ok(())
     }
 }

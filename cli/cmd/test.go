@@ -64,12 +64,12 @@ var testCmd = &cobra.Command{
 		}
 		defer session.Close()
 
-		pipe, err := session.StdinPipe()
+		in, err := session.StdinPipe()
 		if err != nil {
 			log.Fatalf("Failed to create stdin pipe: %v", err)
 		}
 
-		fmt.Fprintf(pipe, "asdfasdfasdfas")
+		fmt.Fprintf(in, "asdfasdfasdfas")
 	},
 }
 

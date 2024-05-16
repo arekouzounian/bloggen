@@ -46,6 +46,8 @@ Ex:
 		flag, err := cmd.Flags().GetString("output")
 		if err != nil {
 			panic(err)
+		} else if flag == "" {
+			fmt.Println("Output flag not specified, defaulting to current directory.")
 		}
 
 		var name string
@@ -70,6 +72,8 @@ Ex:
 		if err != nil {
 			fmt.Println("Error writing to file:", err.Error())
 		}
+
+		fmt.Printf("File created at %s\n", name+ext)
 	},
 }
 
