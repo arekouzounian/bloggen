@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Write};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -7,7 +8,7 @@ use config::ServerConfig;
 use russh::server::{Msg, Server as _, Session};
 use russh::{Channel, ChannelId};
 use russh_keys::key::KeyPair;
-use russh_sftp::protocol::{File, FileAttributes, Handle, Name, Status, StatusCode, Version};
+use russh_sftp::protocol::{FileAttributes, Handle, OpenFlags, Status, StatusCode, Version};
 use tokio::sync::Mutex;
 
 use once_cell::sync::OnceCell;
@@ -206,6 +207,7 @@ impl russh::server::Handler for SshSession {
 #[derive(Default)]
 struct SftpSession {
     version: Option<u32>,
+    open_files: Arc<Mutex<HashMap<String, File>>>,
 }
 
 #[async_trait]
@@ -225,16 +227,101 @@ impl russh_sftp::server::Handler for SftpSession {
             error!("duplicate SSH_FXP_VERSION packet");
             return Err(StatusCode::ConnectionLost);
         }
+
         Ok(Version::new())
     }
 
-    async fn close(&mut self, id: u32, _handle: String) -> Result<Status, Self::Error> {
-        Ok(Status {
+    async fn open(
+        &mut self,
+        id: u32,
+        filename: String,
+        pflags: OpenFlags,
+        _attrs: FileAttributes,
+    ) -> Result<Handle, Self::Error> {
+        info!(
+            "open called: id {} filename {} pflags {:?}",
+            &id, &filename, &pflags
+        );
+
+        let srv_cfg = SERVER_CONFIG.get().unwrap();
+
+        let mut full_path = srv_cfg.sftp_base_dir.as_ref().unwrap().clone();
+
+        // only allows base directory to be accessed through sftp
+        match filename.rfind('/') {
+            Some(_ind) => return Err(StatusCode::PermissionDenied),
+            None => full_path.push_str(&filename),
+        };
+
+        // do we parse pflags or do we make it write only?
+        info!("attempting to open {}", &full_path);
+        let file = match File::options().write(true).create(true).open(&full_path) {
+            Ok(f) => f,
+            Err(_) => return Err(StatusCode::Failure),
+        };
+
+        {
+            let mut mutex_opened_files = self.open_files.lock().await;
+            if mutex_opened_files.contains_key(&full_path) {
+                return Err(StatusCode::Failure);
+            } else {
+                mutex_opened_files.insert(full_path.clone(), file);
+            }
+        }
+
+        Ok(Handle {
             id,
-            status_code: StatusCode::Ok,
-            error_message: "Ok".to_string(),
-            language_tag: "en-US".to_string(),
+            handle: full_path,
         })
+    }
+
+    async fn write(
+        &mut self,
+        id: u32,
+        handle: String,
+        _offset: u64,
+        data: Vec<u8>,
+    ) -> Result<Status, Self::Error> {
+        // need to acquire lock for this whole block
+        let mut m_opened_files = self.open_files.lock().await;
+
+        let f = match m_opened_files.get_mut(&handle) {
+            Some(f) => f,
+            None => return Err(StatusCode::NoSuchFile),
+        };
+
+        match f.write(&data) {
+            Ok(_) => Ok(Status {
+                id,
+                status_code: StatusCode::Ok,
+                error_message: String::from("Ok"),
+                language_tag: String::from("en-US"),
+            }),
+            Err(_) => Err(StatusCode::Failure),
+        }
+    }
+
+    async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
+        info!("call closed with id {} and handle {}", id, &handle);
+
+        let mut _removed: Option<File> = None;
+        {
+            let mut mutex_opened_files = self.open_files.lock().await;
+            _removed = mutex_opened_files.remove(&handle);
+        }
+
+        match _removed {
+            Some(_) => {
+                info!("file {} closed successfully", &handle);
+                Ok(Status {
+                    id,
+                    status_code: StatusCode::Ok,
+                    error_message: "Ok".to_string(),
+                    language_tag: "en-US".to_string(),
+                })
+            }
+            None => Err(StatusCode::NoSuchFile),
+        }
     }
 }
 

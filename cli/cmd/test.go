@@ -6,9 +6,8 @@ package cmd
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
-
-	// "net"
 
 	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
@@ -48,7 +47,7 @@ var testCmd = &cobra.Command{
 			Auth: []ssh.AuthMethod{
 				ssh.PublicKeys(signer),
 			},
-			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(), // change this later
 		}
 
 		// Connect to SSH server
@@ -66,30 +65,33 @@ var testCmd = &cobra.Command{
 
 		fmt.Println("sftp client connected.")
 
+		file, err := sftpClient.OpenFile("asdf.txt", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+		if err != nil {
+			log.Fatalf("%v", err)
+		}
+
+		file.Write([]byte("FUCKER THIS WORKED!!"))
+
+		err = file.Close()
+		if err != nil {
+			log.Fatalf("%v", err)
+		}
 	},
 }
 
-// func callback(hostname string, remote net.Addr, key ssh.PublicKey) error {
+func callback(hostname string, remote net.Addr, key ssh.PublicKey) error {
 
-// 	// ip_addr := strings.Split(remote.String(), ":")[0]
+	// ip_addr := strings.Split(remote.String(), ":")[0]
 
-// 	// if ip_addr != "127.0.0.1" {
-// 	// 	return errors.New("FUCK YOU!!!! LOCALHOST ONLY")
-// 	// }
-// 	return nil
-// }
+	// if ip_addr != "127.0.0.1" {
+	// 	return errors.New("FUCK YOU!!!! LOCALHOST ONLY")
+	// }
+	// parse known hosts
+
+	return nil
+}
 
 func init() {
 	rootCmd.AddCommand(testCmd)
-
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// testCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// testCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 	testCmd.Flags().StringP("target", "t", "localhost", "The target domain or IP address to connect to. Default is localhost")
 }
