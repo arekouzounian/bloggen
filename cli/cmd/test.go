@@ -10,6 +10,7 @@ import (
 
 	// "net"
 
+	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 )
@@ -57,19 +58,14 @@ var testCmd = &cobra.Command{
 		}
 		defer conn.Close()
 
-		// Create new SSH session
-		session, err := conn.NewSession()
+		sftpClient, err := sftp.NewClient(conn)
 		if err != nil {
-			log.Fatalf("Failed to create SSH session: %v", err)
+			log.Fatalf("Failed to create sftp client: %v", err)
 		}
-		defer session.Close()
+		defer sftpClient.Close() // for some reason this hangs
 
-		in, err := session.StdinPipe()
-		if err != nil {
-			log.Fatalf("Failed to create stdin pipe: %v", err)
-		}
+		fmt.Println("sftp client connected.")
 
-		fmt.Fprintf(in, "asdfasdfasdfas")
 	},
 }
 

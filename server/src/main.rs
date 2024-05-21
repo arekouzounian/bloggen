@@ -1,81 +1,148 @@
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use config::ServerConfig;
 use russh::server::{Msg, Server as _, Session};
-use russh::*;
-use russh_keys::*;
+use russh::{Channel, ChannelId};
+use russh_keys::key::KeyPair;
+use russh_sftp::protocol::{File, FileAttributes, Handle, Name, Status, StatusCode, Version};
 use tokio::sync::Mutex;
+
+use once_cell::sync::OnceCell;
+
+use log::{error, info};
+use simplelog::{Config as LogConfig, LevelFilter as LogLevelFilter, SimpleLogger, WriteLogger};
+
+mod config;
+
+// static global_server_config: ServerConfig;
+static SERVER_CONFIG: OnceCell<ServerConfig> = OnceCell::new();
+
+fn init_config() -> Result<(), anyhow::Error> {
+    let args: Vec<String> = std::env::args().collect();
+    let mut srv_cfg: ServerConfig;
+
+    if args.len() < 2 {
+        srv_cfg = ServerConfig::default();
+    } else {
+        srv_cfg = ServerConfig::try_from(&args[1])?;
+    }
+
+    match &srv_cfg.log_file_path {
+        Some(s) => WriteLogger::init(
+            LogLevelFilter::Info,
+            LogConfig::default(),
+            std::fs::File::create(&s).unwrap(),
+        ),
+        None => SimpleLogger::init(LogLevelFilter::Info, LogConfig::default()),
+    }?;
+
+    srv_cfg.sftp_base_dir = match srv_cfg.sftp_base_dir {
+        Some(mut s) => match s.rfind('/') {
+            Some(ind) => {
+                if ind != s.len() - 1 {
+                    s.push('/');
+                }
+                Some(s)
+            }
+            None => {
+                s.push('/');
+                Some(s)
+            }
+        },
+        None => Some(String::from("./")),
+    };
+
+    SERVER_CONFIG
+        .set(srv_cfg)
+        .expect("server config already initialized");
+
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() {
-    let port = 2222;
+    init_config().unwrap();
+    let srv_cfg = SERVER_CONFIG.get().unwrap();
 
     let config = russh::server::Config {
         inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
         auth_rejection_time: std::time::Duration::from_secs(3),
         auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
-        methods: MethodSet::all(),
-        keys: vec![russh_keys::key::KeyPair::generate_ed25519().unwrap()],
+        methods: russh::MethodSet::all(),
+        keys: vec![KeyPair::generate_ed25519().unwrap()],
         ..Default::default()
     };
 
-    let config = Arc::new(config);
+    let mut server = Server;
 
-    let mut sh = Server {
-        clients: Arc::new(Mutex::new(HashMap::new())),
-        id: 0,
-    };
-
-    println!("Running on port {}", port);
-    sh.run_on_address(config, ("127.0.0.1", port))
+    info!("Server running on {}:{}", &srv_cfg.interface, &srv_cfg.port);
+    server
+        .run_on_address(
+            Arc::new(config),
+            (srv_cfg.interface.clone(), srv_cfg.port.parse().unwrap()),
+        )
         .await
         .unwrap();
 }
 
 #[derive(Clone)]
-struct Server {
-    clients: Arc<Mutex<HashMap<(usize, ChannelId), russh::server::Handle>>>,
-    id: usize,
+struct Server;
+
+impl russh::server::Server for Server {
+    type Handler = SshSession;
+
+    fn new_client(&mut self, _: Option<std::net::SocketAddr>) -> Self::Handler {
+        SshSession::default()
+    }
 }
 
-impl Server {
-    // async fn post(&mut self, data: CryptoVec) {
-    //     let mut clients = self.clients.lock().await;
-    //     for ((id, channel), ref mut s) in clients.iter_mut() {
-    //         if *id != self.id {
-    //             let _ = s.data(*channel, data.clone()).await;
-    //         }
-    //     }
-    // }
+struct SshSession {
+    clients: Arc<Mutex<HashMap<ChannelId, Channel<Msg>>>>,
 }
 
-impl server::Server for Server {
-    type Handler = Self;
-    fn new_client(&mut self, _: Option<std::net::SocketAddr>) -> Self {
-        let s = self.clone();
-        self.id += 1;
-        s
+impl Default for SshSession {
+    fn default() -> Self {
+        Self {
+            clients: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+impl SshSession {
+    pub async fn take_channel(&mut self, channel_id: ChannelId) -> Channel<Msg> {
+        let mut clients = self.clients.lock().await;
+        clients.remove(&channel_id).unwrap()
     }
 }
 
 #[async_trait]
-impl server::Handler for Server {
+impl russh::server::Handler for SshSession {
     type Error = anyhow::Error;
 
     async fn channel_open_session(
         &mut self,
         channel: Channel<Msg>,
-        session: &mut Session,
+        _session: &mut Session,
     ) -> Result<bool, Self::Error> {
+        info!("New client received on channel id {}", &channel.id());
         {
             let mut clients = self.clients.lock().await;
-            clients.insert((self.id, channel.id()), session.handle());
+            clients.insert(channel.id(), channel);
         }
-        println!("New client received on channel id {}", channel.id());
         Ok(true)
+    }
+
+    async fn channel_eof(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        session.close(channel);
+
+        Ok(())
     }
 
     async fn channel_close(
@@ -83,7 +150,7 @@ impl server::Handler for Server {
         channel: ChannelId,
         _: &mut Session,
     ) -> Result<(), Self::Error> {
-        println!("Client on channel {} has closed.", channel);
+        info!("Client on channel {} has closed.", channel);
 
         Ok(())
     }
@@ -91,10 +158,10 @@ impl server::Handler for Server {
     async fn auth_publickey(
         &mut self,
         _: &str,
-        pkey: &key::PublicKey,
-    ) -> Result<server::Auth, Self::Error> {
+        pkey: &russh_keys::key::PublicKey,
+    ) -> Result<russh::server::Auth, Self::Error> {
         let auth_file = "/Users/arekouzounian/.ssh/authorized_keys";
-        let file = File::open(auth_file)?;
+        let file = std::fs::File::open(auth_file)?;
         let buf_reader = BufReader::new(file);
 
         for line in buf_reader.lines().map(|l| l.unwrap()) {
@@ -106,33 +173,116 @@ impl server::Handler for Server {
             let key = russh_keys::parse_public_key_base64(&b64[1])?;
 
             if key.eq(pkey) {
-                println!("they equal");
-                return Ok(server::Auth::Accept);
+                info!("Client authenticated with public key");
+                return Ok(russh::server::Auth::Accept);
             }
         }
 
-        Ok(server::Auth::Reject {
+        error!("Client failed to authenticate with public key");
+        Ok(russh::server::Auth::Reject {
             proceed_with_methods: None,
         })
     }
 
-    async fn data(
+    async fn subsystem_request(
         &mut self,
-        channel: ChannelId,
-        data: &[u8],
-        _: &mut Session,
+        channel_id: ChannelId,
+        name: &str,
+        session: &mut Session,
     ) -> Result<(), Self::Error> {
-        // let data = CryptoVec::from(format!("Got data: {}\r\n", String::from_utf8_lossy(data)));
-        // self.post(data.clone()).await;
-        // session.data(channel, data);
-        println!(
-            "Got data from channel id {}: {}",
-            channel,
-            String::from_utf8_lossy(data)
-        );
-        // let resp = CryptoVec::from(String::from("msg received"));
+        if name == "sftp" {
+            let channel = self.take_channel(channel_id).await;
+            let sftp = SftpSession::default();
+            session.channel_success(channel_id);
+            russh_sftp::server::run(channel.into_stream(), sftp).await;
+        } else {
+            session.channel_failure(channel_id)
+        }
 
-        // session.data(channel, resp);
         Ok(())
+    }
+}
+
+#[derive(Default)]
+struct SftpSession {
+    version: Option<u32>,
+}
+
+#[async_trait]
+impl russh_sftp::server::Handler for SftpSession {
+    type Error = StatusCode;
+
+    fn unimplemented(&self) -> Self::Error {
+        StatusCode::OpUnsupported
+    }
+
+    async fn init(
+        &mut self,
+        _version: u32,
+        _extensions: HashMap<String, String>,
+    ) -> Result<Version, Self::Error> {
+        if self.version.is_some() {
+            error!("duplicate SSH_FXP_VERSION packet");
+            return Err(StatusCode::ConnectionLost);
+        }
+        Ok(Version::new())
+    }
+
+    async fn close(&mut self, id: u32, _handle: String) -> Result<Status, Self::Error> {
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: "Ok".to_string(),
+            language_tag: "en-US".to_string(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg_logger(srv_cfg: &ServerConfig) {
+        match &srv_cfg.log_file_path {
+            Some(s) => WriteLogger::init(
+                LogLevelFilter::Info,
+                LogConfig::default(),
+                std::fs::File::create(s).unwrap(),
+            ),
+            None => SimpleLogger::init(LogLevelFilter::Info, LogConfig::default()),
+        }
+        .unwrap();
+    }
+
+    /// run with `cargo test -- --nocapture`
+    #[test]
+    fn test_get_config() {
+        let result = config::ServerConfig::try_from("test.json").unwrap();
+        cfg_logger(&result);
+
+        let interface = &result.interface;
+        let port = &result.port;
+        let keyfile = &result.authorized_key_file;
+        let log_file = &result.log_file_path;
+
+        info!(
+            "Set to run on {}:{}, with keyfile {} and logfile {:?}",
+            interface, port, keyfile, log_file
+        );
+    }
+
+    /// run with `cargo test -- --nocapture`
+    #[test]
+    fn test_default_config() {
+        let result = config::ServerConfig::default();
+
+        let interface = &result.interface;
+        let port = &result.port;
+        let keyfile = &result.authorized_key_file;
+
+        info!(
+            "Set to run on {}:{}, with keyfile {}",
+            interface, port, keyfile
+        );
     }
 }

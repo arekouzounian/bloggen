@@ -1,0 +1,6 @@
+{
+    "interface":"127.0.0.1", 
+    "port": "2222",
+    "authorized_key_file":"/Users/arekouzounian/.ssh/authorized_keys",
+    "log_file_path":"./bloggen-server.log"
+}
