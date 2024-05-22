@@ -323,6 +323,59 @@ impl russh_sftp::server::Handler for SftpSession {
             None => Err(StatusCode::NoSuchFile),
         }
     }
+
+    async fn mkdir(
+        &mut self,
+        id: u32,
+        path: String,
+        _attrs: FileAttributes,
+    ) -> Result<Status, Self::Error> {
+        let srv_cfg = SERVER_CONFIG.get().unwrap();
+        let mut full_path = srv_cfg.sftp_base_dir.as_ref().unwrap().clone();
+
+        // maybe fix with regex down the line
+        if path.find("..").is_some() {
+            return Err(StatusCode::PermissionDenied);
+        }
+
+        match path.find("/") {
+            Some(ind) => {
+                if ind == 0 {
+                    return Err(StatusCode::PermissionDenied);
+                }
+            }
+            _ => (),
+        };
+        match path.find("./") {
+            Some(ind) => {
+                if ind == 0 {
+                    full_path.push_str(&path.as_str()[2..])
+                } else {
+                    return Err(StatusCode::PermissionDenied);
+                }
+            }
+            _ => (),
+        }
+
+        if full_path.eq(srv_cfg.sftp_base_dir.as_ref().unwrap()) {
+            full_path.push_str(&path);
+        }
+
+        info!(
+            "Attempting to create dir {} for client on id {}",
+            &full_path, id
+        );
+
+        match std::fs::create_dir_all(&full_path) {
+            Ok(_) => Ok(Status {
+                id,
+                status_code: StatusCode::Ok,
+                error_message: "Ok".to_string(),
+                language_tag: "en-US".to_string(),
+            }),
+            Err(_) => Err(StatusCode::Failure),
+        }
+    }
 }
 
 #[cfg(test)]
