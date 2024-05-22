@@ -1,5 +1,9 @@
 package cmd
 
+/*
+Copyright © 2024 Arek Ouzounian <arek@arekouzounian.com>
+*/
+
 import (
 	"github.com/gomarkdown/markdown"
 	"github.com/gomarkdown/markdown/html"

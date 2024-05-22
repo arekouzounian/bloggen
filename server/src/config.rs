@@ -1,3 +1,6 @@
+//
+// Copyright © 2024 Arek Ouzounian <arek@arekouzounian.com>
+//
 use anyhow::Result;
 use serde::Deserialize;
 

@@ -1,5 +1,5 @@
 /*
-Copyright © 2023 Arek Ouzounian
+Copyright © 2024 Arek Ouzounian <arek@arekouzounian.com>
 */
 package main
 

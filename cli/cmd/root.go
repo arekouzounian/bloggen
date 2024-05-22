@@ -1,5 +1,5 @@
 /*
-Copyright © 2023 NAME HERE <EMAIL ADDRESS>
+Copyright © 2024 Arek Ouzounian <arek@arekouzounian.com>
 */
 package cmd
 

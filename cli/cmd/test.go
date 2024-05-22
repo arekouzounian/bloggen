@@ -1,5 +1,5 @@
 /*
-Copyright © 2023 NAME HERE <EMAIL ADDRESS>
+Copyright © 2024 Arek Ouzounian <arek@arekouzounian.com>
 */
 package cmd
 
@@ -65,17 +65,28 @@ var testCmd = &cobra.Command{
 
 		fmt.Println("sftp client connected.")
 
-		file, err := sftpClient.OpenFile("asdf.txt", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
-		if err != nil {
-			log.Fatalf("%v", err)
-		}
+		// file, err := sftpClient.OpenFile("asdf.txt", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+		// if err != nil {
+		// 	log.Fatalf("%v", err)
+		// }
 
-		file.Write([]byte("FUCKER THIS WORKED!!"))
+		// file.Write([]byte("FUCKER THIS WORKED!!"))
 
-		err = file.Close()
-		if err != nil {
-			log.Fatalf("%v", err)
-		}
+		// err = file.Close()
+		// if err != nil {
+		// 	log.Fatalf("%v", err)
+		// }
+
+		err = sftpClient.Mkdir("/test")      // should fail
+		err2 := sftpClient.Mkdir("../test3") // should fail
+
+		fmt.Printf("%t\n", err != nil && err2 != nil)
+
+		err3 := sftpClient.Mkdir("test/")      // should work
+		err4 := sftpClient.Mkdir("test/asdf/") // should work
+		err5 := sftpClient.Mkdir("test2")      // should work
+
+		fmt.Printf("%t\n", err3 == err4 && err4 == err5) // should all be nil
 	},
 }
 
