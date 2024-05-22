@@ -31,22 +31,6 @@ Ex:
 			return
 		}
 
-		// MIME-type checking?
-		f, err := os.Stat(args[0])
-		if err != nil {
-			fmt.Println(err.Error())
-			return
-		}
-
-		file, err := os.ReadFile(args[0])
-		if err != nil {
-			fmt.Println(err.Error())
-			return
-		}
-
-		conv := mdToHTML(file)
-		// fmt.Println(string(conv))
-
 		flag, err := cmd.Flags().GetString("output")
 		if err != nil {
 			panic(err)
@@ -54,31 +38,53 @@ Ex:
 			fmt.Println("Output flag not specified, defaulting to current directory.")
 		}
 
-		var name string
-		ext := ".html"
-		if flag == DEFAULT_OUTPUT {
-			name = strings.Split(f.Name(), ".")[0]
-		} else {
-			name = flag
-			ext = ""
-		}
-
-		// err = os.WriteFile(name+mod+EXT, conv, fs.FileMode(os.O_RDWR))
-		new_file, err := os.Create(name + ext)
+		err = ConvertMDToHTML(args[0], flag, true)
 		if err != nil {
-			fmt.Println("Error creating file:", name+ext)
 			fmt.Println(err.Error())
-			return
-		}
-		defer new_file.Close()
-
-		_, err = new_file.Write(conv)
-		if err != nil {
-			fmt.Println("Error writing to file:", err.Error())
 		}
 
-		fmt.Printf("File created at %s\n", name+ext)
 	},
+}
+
+// Converts `file_path` to HTML and saves it in `target_location`. Prints a success message if `verbose` is true.
+func ConvertMDToHTML(file_path string, target_location string, verbose bool) error {
+	f, err := os.Stat(file_path)
+	if err != nil {
+		return err
+	}
+
+	file, err := os.ReadFile(file_path)
+	if err != nil {
+		return err
+	}
+
+	conv := mdToHTML(file)
+
+	var name string
+	ext := ".html"
+	if target_location == DEFAULT_OUTPUT {
+		name = strings.Split(f.Name(), ".")[0]
+	} else {
+		name = target_location
+		ext = ""
+	}
+
+	// err = os.WriteFile(name+mod+EXT, conv, fs.FileMode(os.O_RDWR))
+	new_file, err := os.Create(name + ext)
+	if err != nil {
+		return err
+	}
+	defer new_file.Close()
+
+	_, err = new_file.Write(conv)
+	if err != nil {
+		return err
+	}
+
+	if verbose {
+		fmt.Printf("File created at %s\n", name+ext)
+	}
+	return nil
 }
 
 func init() {
