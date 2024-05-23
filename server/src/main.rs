@@ -144,18 +144,8 @@ impl russh::server::Handler for SshSession {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        info!("Client on channnel {} has closed.", channel);
         session.close(channel);
-
-        Ok(())
-    }
-
-    async fn channel_close(
-        &mut self,
-        channel: ChannelId,
-        _: &mut Session,
-    ) -> Result<(), Self::Error> {
-        info!("Client on channel {} has closed.", channel);
-
         Ok(())
     }
 
@@ -251,16 +241,21 @@ impl russh_sftp::server::Handler for SftpSession {
         let mut full_path = srv_cfg.sftp_base_dir.as_ref().unwrap().clone();
 
         // only allows base directory to be accessed through sftp
-        match filename.rfind('/') {
-            Some(_ind) => return Err(StatusCode::PermissionDenied),
-            None => full_path.push_str(&filename),
-        };
+        if let Some(ind) = filename.find('/') {
+            if ind == 0 {
+                return Err(StatusCode::PermissionDenied);
+            }
+        }
+        full_path.push_str(&filename);
 
         // do we parse pflags or do we make it write only?
         info!("attempting to open {}", &full_path);
         let file = match File::options().write(true).create(true).open(&full_path) {
             Ok(f) => f,
-            Err(_) => return Err(StatusCode::Failure),
+            Err(e) => {
+                error!("Error opening file {} {:?}", &full_path, e);
+                return Err(StatusCode::Failure);
+            }
         };
 
         {

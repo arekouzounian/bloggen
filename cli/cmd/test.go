@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"log"
-	"net"
 	"os"
 
 	"github.com/pkg/sftp"
@@ -63,43 +62,8 @@ var testCmd = &cobra.Command{
 		}
 		defer sftpClient.Close() // for some reason this hangs
 
-		fmt.Println("sftp client connected.")
-
-		// file, err := sftpClient.OpenFile("asdf.txt", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
-		// if err != nil {
-		// 	log.Fatalf("%v", err)
-		// }
-
-		// file.Write([]byte("FUCKER THIS WORKED!!"))
-
-		// err = file.Close()
-		// if err != nil {
-		// 	log.Fatalf("%v", err)
-		// }
-
-		err = sftpClient.Mkdir("/test")      // should fail
-		err2 := sftpClient.Mkdir("../test3") // should fail
-
-		fmt.Printf("%t\n", err != nil && err2 != nil)
-
-		err3 := sftpClient.Mkdir("test/")      // should work
-		err4 := sftpClient.Mkdir("test/asdf/") // should work
-		err5 := sftpClient.Mkdir("test2")      // should work
-
-		fmt.Printf("%t\n", err3 == err4 && err4 == err5) // should all be nil
+		fmt.Println("Connection success.")
 	},
-}
-
-func callback(hostname string, remote net.Addr, key ssh.PublicKey) error {
-
-	// ip_addr := strings.Split(remote.String(), ":")[0]
-
-	// if ip_addr != "127.0.0.1" {
-	// 	return errors.New("FUCK YOU!!!! LOCALHOST ONLY")
-	// }
-	// parse known hosts
-
-	return nil
 }
 
 func init() {
