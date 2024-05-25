@@ -110,6 +110,8 @@ This command will automatically attempt to convert the contained markdown to HTM
 	},
 }
 
+// TODO: create secure host callback using known hosts
+
 func UploadPost(directory_path string, host string, keypath string) error {
 	key, err := os.ReadFile(keypath)
 	if err != nil {
