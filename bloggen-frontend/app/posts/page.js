@@ -2,10 +2,8 @@ import fs from 'fs';
 import path from 'path';
 
 export default function Page() {
-    const p = path.resolve('.', 'app', 'static'); 
+    const p = path.resolve(process.cwd(), 'app', 'static'); 
     const posts = fs.readdirSync(p);
-
-    
     return (
         <div className="text-center">
             <ul className="list-none bold underline">

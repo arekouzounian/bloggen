@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
-export const dynamicParams = false
+export const dynamicParams = false;
+export const revalidate = 10; 
 
 export async function generateStaticParams() {
   let p = path.resolve('.', 'app', 'static');
@@ -18,12 +19,13 @@ export async function generateStaticParams() {
 
   let x = dirs.map((dir) => ({
     postname: dir
-  }));
+  })); 
 
   return x; 
 }
 
 export default function Page({ params }) {
+  console.log(params);
   const { postname } = params; 
 
 
@@ -38,7 +40,7 @@ export default function Page({ params }) {
   return (
     <div>
     <h1 className="text-3xl font-bold underline">you made it to post '{postname}'</h1>
-    <div className='content-container' dangerouslySetInnerHTML={{__html: data}}></div>
+    <div className='content-container border-2 p-2' dangerouslySetInnerHTML={{__html: data}}></div>
     </div>
   );
 
