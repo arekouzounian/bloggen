@@ -10,4 +10,8 @@ The goal was for these tools to be developed for my own personal blog, but a sec
 
 The web-based frontend will be housed in the [frontend folder](./frontend/), the command-line interface code will be in [the cli folder](./cli/), and  server-side code doesn't exist quite yet, but will likely be stashed away under some future folder. 
 
-I will also be creating blog posts about the process of creating the blogging framework (chicken or egg? take your pick); to that end, the [initial posts](./initial-posts/) folder houses these blog posts. 
+This project is in active development; it is not yet ready to be downloaded and used. 
+
+TODO: 
+- Installation Instructions
+- Configuration Documentation 
