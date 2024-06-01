@@ -28,7 +28,8 @@ export async function generateStaticParams() {
 }
 
 export default function Page({ params }) {
-  const { postname } = params; 
+  let { postname } = params; 
+  postname = decodeURIComponent(postname);
 
   let post_dir = path.resolve(process.cwd(), 'app', 'static', postname);
   let exists = fs.existsSync(post_dir);
@@ -46,9 +47,10 @@ export default function Page({ params }) {
   let data = fs.readFileSync(path.join(post_dir, post_file)).toString();
   
   return (
-    <div className="dark:bg-blue-950 dark:text-white">
-      <h1 className="text-3xl font-bold underline">you made it to post &apos;{postname}&apos;</h1>
-      <div className='content-container border-2 rounded-md p-2 m-2' dangerouslySetInnerHTML={{__html: data}}></div>
+    <div className="dark:bg-blue-850 dark:text-white">
+      <h1 className="text-3xl font-bold underline text-center m-3 ">{postname}</h1>
+      <div className='content-container border-2 rounded-md p-4 m-2' dangerouslySetInnerHTML={{__html: data}}></div>
+      <a href="/posts" className="flex flex-col items-center font-medium text-slate-500 dark:text-gray hover:underline">back</a>
       <Footer />
     </div>
   );

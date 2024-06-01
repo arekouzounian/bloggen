@@ -1,29 +1,41 @@
 @tailwind base;
-@tailwind components;
 @tailwind utilities;
+@tailwind components;
 
-:root {
-  /* --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 214, 219, 220;
-  --background-end-rgb: 255, 255, 255; */
+.content-container ul {
+  padding-left: 5%; 
+  list-style-type:square; 
+}
+.content-container a {
+  font-weight: bold; 
+  color: slategray; 
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* --foreground-rgb: 255, 255, 255;
-    --background-start-rgb: 0, 0, 0;
-    --background-end-rgb: 0, 0, 0; */
-  }
+.content-container h1{
+  font-weight: bold; 
+  font-size: 140%; 
+}
+.content-container h2{
+  font-weight: bold; 
+  font-size: 130%; 
+}
+.content-container h3{
+  font-weight: bold; 
+  font-size: 120%; 
+}
+.content-container h4{
+  font-weight: bold; 
+  font-size: 110%; 
 }
 
-body {
-  /* color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb)); */
+.content-container p {
+  padding-top: 2%; 
+  padding-bottom: 2%; 
+}
+
+.content-container hr {
+  border: 1px solid gray; 
+  border-radius: 10px; 
 }
 
 @layer utilities {
