@@ -38,7 +38,7 @@ Ex:
 			fmt.Println("Output flag not specified, defaulting to current directory.")
 		}
 
-		err = ConvertMDToHTML(args[0], flag, true)
+		err = ConvertMDToHTML(args[0], flag)
 		if err != nil {
 			fmt.Println(err.Error())
 		}
@@ -46,8 +46,8 @@ Ex:
 	},
 }
 
-// Converts `file_path` to HTML and saves it in `target_location`. Prints a success message if `verbose` is true.
-func ConvertMDToHTML(file_path string, target_location string, verbose bool) error {
+// Converts `file_path` to HTML and saves it in `target_location`.
+func ConvertMDToHTML(file_path string, target_location string) error {
 	f, err := os.Stat(file_path)
 	if err != nil {
 		return err
@@ -58,7 +58,7 @@ func ConvertMDToHTML(file_path string, target_location string, verbose bool) err
 		return err
 	}
 
-	conv := mdToHTML(file)
+	conv := MDToHTML(file)
 
 	var name string
 	ext := ".html"
@@ -81,9 +81,8 @@ func ConvertMDToHTML(file_path string, target_location string, verbose bool) err
 		return err
 	}
 
-	if verbose {
-		fmt.Printf("File created at %s\n", name+ext)
-	}
+	fmt.Printf("File created at %s\n", name+ext)
+
 	return nil
 }
 

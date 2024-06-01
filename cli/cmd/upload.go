@@ -62,34 +62,45 @@ This command will automatically attempt to convert the contained markdown to HTM
 			if err != nil {
 				fmt.Printf("Error accessing default keyfile: %v", err)
 			}
-			keypath = homedir + "/.ssh/id_rsa"
+
+			keypath = filepath.Join(homedir, ".ssh", "id_rsa")
 		}
 
-		path, err := filepath.Abs(target)
+		target, err = filepath.Abs(target)
 		if err != nil {
 			fmt.Printf("Not a valid directory: %s\n", target)
 			return
 		}
-		target = path + "/"
 
-		md_file, err := ValidateDirectoryStructure(target)
+		res, err := ValidateDirectoryStructure(target)
 		if err != nil {
 			fmt.Printf("Invalid directory structure: %v\n", err)
 			return
 		}
 
+		md_file := res.MarkdownFilePath
+
 		if !no_conv {
-			ind := strings.LastIndex(md_file, "/")
-			if ind >= 0 {
-				new_path := md_file[:strings.LastIndex(md_file, ".")] + ".html"
-				ConvertMDToHTML(md_file, new_path, false)
-			} else {
-				fmt.Printf("Path to blog post is not absolute: %s\n", md_file)
+			file, err := os.ReadFile(md_file)
+			if err != nil {
+				fmt.Printf("Unable to read file %s: %v\n", md_file, err)
+				return
+			}
+			ast, err := InterceptLinks(GetDocumentAST(file), filepath.Dir(md_file))
+			if err != nil {
+				fmt.Printf("Error intercepting document links: %v\n", err)
+				return
+			}
+			new_path := md_file[:strings.LastIndex(md_file, ".")] + ".html"
+
+			err = os.WriteFile(new_path, RenderHTML(ast), 0666)
+			if err != nil {
+				fmt.Printf("Error writing to file %s: %v\n", new_path, err)
 				return
 			}
 		} else {
 			// check that html file exists
-			hasHtml, err := FileExtensionExists(target, "html")
+			hasHtml, err := FileExtensionExists(target, ".html")
 			if err != nil {
 				fmt.Printf("Unable to read target directory %s: %v", target, err)
 				return
@@ -162,22 +173,23 @@ func UploadPost(directory_path string, host string, keypath string) error {
 			return nil // skip
 		}
 
+		remote_path := filepath.Join(remote_folder_name, path)
 		if entry.IsDir() {
-			err = sftpClient.Mkdir(remote_folder_name + path)
+			err = sftpClient.Mkdir(remote_path)
 			if err != nil {
-				fmt.Printf("Error creating directory %s on remote: %v\n", remote_folder_name+path, err)
+				fmt.Printf("Error creating directory %s on remote: %v\n", remote_path, err)
 				return err
 			}
 		} else {
-			b, err := os.ReadFile(directory_path + path)
+			b, err := os.ReadFile(filepath.Join(directory_path, path))
 			if err != nil {
 				fmt.Printf("Error reading file %s\n", directory_path+path)
 				return err
 			}
 
-			remote, err := sftpClient.OpenFile(remote_folder_name+path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+			remote, err := sftpClient.OpenFile(remote_path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 			if err != nil {
-				fmt.Printf("Error opening file %s on remote: %v\n", remote_folder_name+path, err)
+				fmt.Printf("Error opening file %s on remote: %v\n", remote_path, err)
 				return err
 			}
 

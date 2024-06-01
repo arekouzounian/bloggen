@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// stores absolute paths of valid post directory elements
+type ValidateDirectoryStructureResult struct {
+	MarkdownFilePath string
+	AssetsDirPath    string
+	MetaFilePath     string
+}
+
 type BlogPostMetaData struct {
 	CreatedAt   time.Time
 	LastChanged time.Time

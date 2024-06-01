@@ -144,7 +144,7 @@ impl russh::server::Handler for SshSession {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        info!("Client on channnel {} has closed.", channel);
+        info!("Client on channel {} has closed.", channel);
         session.close(channel);
         Ok(())
     }
