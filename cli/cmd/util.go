@@ -5,9 +5,12 @@ Copyright © 2024 Arek Ouzounian <arek@arekouzounian.com>
 */
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gomarkdown/markdown"
 	"github.com/gomarkdown/markdown/ast"
@@ -193,4 +196,93 @@ func CopyFile(source_path string, dest_path string) error {
 	}
 
 	return nil
+}
+
+// `dir_path` is the path to the directory where `meta.json` will be housed
+func WriteMetaDataFromInput(dir_path string) error {
+	var Author string
+	var Title string
+	var Description string
+
+	scanner := bufio.NewScanner(os.Stdin)
+
+	fmt.Println("Enter Post Metadata, or hit Enter for default: ")
+	for {
+		fmt.Print("\tPost Author (default ''): ")
+		scanner.Scan()
+		if scanner.Err() != nil {
+			fmt.Println("Invalid argument. Please try again.")
+			continue
+		}
+
+		Author = scanner.Text()
+		break
+	}
+
+	for {
+		fmt.Print("\tPost Title (defaults to name of parent folder): ")
+		scanner.Scan()
+		if scanner.Err() != nil {
+			fmt.Println("Invalid Argument. Please try again.")
+			continue
+		}
+
+		txt := scanner.Text()
+		if txt == "" {
+			txt = filepath.Base(dir_path)
+		}
+
+		Title = txt
+		break
+	}
+
+	for {
+		fmt.Print("\tPost Description (default ''): ")
+		scanner.Scan()
+		if err := scanner.Err(); err != nil {
+			fmt.Println("Invalid Argument. Please try again.")
+			fmt.Println(err.Error())
+			continue
+		}
+
+		Description = scanner.Text()
+		break
+	}
+
+	ser := BlogPostMetaData{
+		LastChanged: time.Now().Unix(),
+		Author:      Author,
+		Title:       Title,
+		Description: Description,
+	}
+
+	b, err := json.Marshal(ser)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(filepath.Join(dir_path, "meta.json"), b, 0666)
+}
+
+func UpdateTimeStampsInMeta(meta_file_path string, timestamp int64) error {
+	b, err := os.ReadFile(meta_file_path)
+	if err != nil {
+		return err
+	}
+
+	var meta BlogPostMetaData
+
+	err = json.Unmarshal(b, &meta)
+	if err != nil {
+		return err
+	}
+
+	meta.LastChanged = timestamp
+
+	b, err = json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(meta_file_path, b, 0666)
 }

@@ -6,7 +6,6 @@ package cmd
 import (
 	"fmt"
 	"io/fs"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,45 +67,56 @@ This command will automatically attempt to convert the contained markdown to HTM
 
 		target, err = filepath.Abs(target)
 		if err != nil {
-			fmt.Printf("Not a valid directory: %s\n", target)
+			fmt.Printf("Fatal: Not a valid directory: %s\n", target)
 			return
 		}
 
 		res, err := ValidateDirectoryStructure(target)
 		if err != nil {
-			fmt.Printf("Invalid directory structure: %v\n", err)
+			fmt.Printf("Fatal: Invalid directory structure: %v\n", err)
 			return
 		}
 
 		md_file := res.MarkdownFilePath
+		stat, err := os.Stat(md_file)
+		if err != nil {
+			fmt.Printf("Fatal: unable to stat markdown file %s: %v\n", md_file, err)
+			return
+		}
+
+		err = UpdateTimeStampsInMeta(res.MetaFilePath, stat.ModTime().Unix())
+		if err != nil {
+			fmt.Printf("Fatal: Unable to update timestamps in meta.json: %v\n", err)
+			return
+		}
 
 		if !no_conv {
 			file, err := os.ReadFile(md_file)
 			if err != nil {
-				fmt.Printf("Unable to read file %s: %v\n", md_file, err)
+				fmt.Printf("Fatal: Unable to read file %s: %v\n", md_file, err)
 				return
 			}
 			ast, err := InterceptLinks(GetDocumentAST(file), filepath.Dir(md_file))
 			if err != nil {
-				fmt.Printf("Error intercepting document links: %v\n", err)
+				fmt.Printf("Fatal: Error intercepting document links: %v\n", err)
 				return
 			}
 			new_path := md_file[:strings.LastIndex(md_file, ".")] + ".html"
 
 			err = os.WriteFile(new_path, RenderHTML(ast), 0666)
 			if err != nil {
-				fmt.Printf("Error writing to file %s: %v\n", new_path, err)
+				fmt.Printf("Fatal: Error writing to file %s: %v\n", new_path, err)
 				return
 			}
 		} else {
 			// check that html file exists
 			hasHtml, err := FileExtensionExists(target, ".html")
 			if err != nil {
-				fmt.Printf("Unable to read target directory %s: %v", target, err)
+				fmt.Printf("Fatal: Unable to read target directory %s: %v", target, err)
 				return
 			}
 			if !hasHtml {
-				fmt.Printf("Specified target directory (%s) lacks an HTML file. Consider using `bloggen conv`, or removing the `no-conv` flag.\n", target)
+				fmt.Printf("Fatal: Specified target directory (%s) lacks an HTML file. Consider using `bloggen conv`, or removing the `no-conv` flag.\n", target)
 				return
 			}
 		}
@@ -151,7 +161,8 @@ func UploadPost(directory_path string, host string, keypath string) error {
 
 	sftpClient, err := sftp.NewClient(conn)
 	if err != nil {
-		log.Fatalf("Failed to create sftp client: %v", err)
+		fmt.Printf("Failed to create sftp client: %v", err)
+		return err
 	}
 	defer sftpClient.Close() // for some reason this hangs
 

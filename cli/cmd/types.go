@@ -4,10 +4,6 @@ package cmd
 Copyright © 2024 Arek Ouzounian <arek@arekouzounian.com>
 */
 
-import (
-	"time"
-)
-
 // stores absolute paths of valid post directory elements
 type ValidateDirectoryStructureResult struct {
 	MarkdownFilePath string
@@ -16,10 +12,13 @@ type ValidateDirectoryStructureResult struct {
 }
 
 type BlogPostMetaData struct {
-	CreatedAt   time.Time
-	LastChanged time.Time
+	LastChanged int64
 
-	// author, title, tags, thumbnail/image?
+	Author      string
+	Title       string
+	Description string
+
+	// tags, thumbnail/img?
 }
 
 type CheckList[K comparable] struct {
