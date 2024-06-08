@@ -4,10 +4,8 @@ Copyright © 2024 Arek Ouzounian <arek@arekouzounian.com>
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -56,19 +54,9 @@ The assets folder is where you can place anything you may be referencing in the 
 		// directory exists at <output>/ now.
 		output += "/"
 
-		meta := BlogPostMetaData{
-			CreatedAt:   time.Now(),
-			LastChanged: time.Now(),
-		}
-		json, err := json.Marshal(meta)
+		err = WriteMetaDataFromInput(output)
 		if err != nil {
-			fmt.Println("Fatal: ", err.Error())
-			return
-		}
-		err = os.WriteFile(output+"meta.json", json, os.FileMode(0666))
-		if err != nil {
-			fmt.Println("Error creating meta.json")
-			fmt.Println(err.Error())
+			fmt.Printf("Error creating meta.json: %v", err)
 			return
 		}
 
@@ -95,14 +83,5 @@ This is a file template. Feel free to get rid of this and replace it with your o
 func init() {
 	postCmd.AddCommand(initCmd)
 
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// initCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// initCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 	initCmd.Flags().StringP("output", "o", ".", "specifies the directory that the new subdirectory will be located within.")
 }
