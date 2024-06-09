@@ -2,10 +2,11 @@ import fs from 'fs';
 import path from 'path';
 
 import Footer from '../../components/Footer';
+import MetaHolder from '../../components/MetaHolder';
 
 export const dynamic = 'auto';
 export const dynamicParams = true;
-export const revalidate = 10; 
+export const revalidate = 60; 
 
 export async function generateStaticParams() {
   let p = path.resolve(process.cwd(), 'app', 'static');
@@ -42,14 +43,22 @@ export default function Page({ params }) {
   let post_file = files.find((file) => {
     return file.endsWith('.html');
   })
-
-
   let data = fs.readFileSync(path.join(post_dir, post_file)).toString();
+
+
+  let metaPath = path.join(post_dir, "meta.json");
+  exists = fs.existsSync(metaPath);
+  let js;
+  if (exists) {
+    let meta = fs.readFileSync(path.join(post_dir, "meta.json")).toString();
+    js = JSON.parse(meta);
+  }
   
   return (
-    <div className="dark:bg-blue-850 dark:text-white">
+    <div className="dark:bg-blue-850 dark:text-white border-2 rounded-md p-4 m-2">
       <h1 className="text-3xl font-bold underline text-center m-3 ">{postname}</h1>
-      <div className='content-container border-2 rounded-md p-4 m-2' dangerouslySetInnerHTML={{__html: data}}></div>
+      <MetaHolder data={js} />
+      <div className='content-container' dangerouslySetInnerHTML={{__html: data}}></div>
       <a href="/posts" className="flex flex-col items-center font-medium text-slate-500 dark:text-gray hover:underline">back</a>
       <Footer />
     </div>

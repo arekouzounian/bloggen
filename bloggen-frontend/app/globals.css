@@ -9,6 +9,10 @@
 .content-container a {
   font-weight: bold; 
   color: slategray; 
+  text-decoration: underline; 
+}
+.content-container a:hover {
+  @apply animate-pulse;
 }
 
 .content-container h1{
