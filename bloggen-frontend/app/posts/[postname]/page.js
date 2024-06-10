@@ -55,7 +55,7 @@ export default function Page({ params }) {
   }
   
   return (
-    <div className="dark:bg-blue-850 dark:text-white border-2 rounded-md p-4 m-2">
+    <div className="dark:bg-blue-850 dark:text-white border-2 rounded-md p-4 m-2 shadow-lg">
       <h1 className="text-3xl font-bold underline text-center m-3 ">{postname}</h1>
       <MetaHolder data={js} />
       <div className='content-container' dangerouslySetInnerHTML={{__html: data}}></div>

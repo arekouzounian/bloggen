@@ -42,7 +42,7 @@ export default function Page() {
             <h1 className="text-3xl bold m-5"> Blog Posts </h1>
             <div className="grid gap-4 grid-cols-1">
                 {posts.map((post, i) => 
-                    <a key={i} className="box-content border-2 rounded-md p-3 hover:animate-pulse" href={"./posts/" + post}>
+                    <a key={i} className="box-content shadow-md border-2 rounded-md p-3 hover:animate-pulse" href={"./posts/" + post}>
                         <div>
                             <p className='bold underline'>{post}</p>
                             <p className="italic opacity-70">{descriptions.get(post)}</p>

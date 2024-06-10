@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Ubuntu } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+// const font = Inter({ subsets: ["latin"] });
+const font = Ubuntu({ subsets: ["latin"], weight: "400" });
 
 export const metadata: Metadata = {
   title: "bloggen",
@@ -17,7 +18,7 @@ export default function RootLayout({
 
   return (
     <html lang="en">
-      <body className={inter.className+" bg-white dark:bg-blue-950 dark:text-white "}>
+      <body className={font.className+" bg-white dark:bg-blue-950 dark:text-white "}>
         <div className="relative pb-24 overflow-hidden">
           <div className="flex flex-col items-center max-w-2xl w-full mx-auto">
             {children}
