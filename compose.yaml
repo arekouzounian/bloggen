@@ -1,0 +1,6 @@
+include: 
+  - server/server.yaml
+  - bloggen-frontend/frontend.yaml
+
+volumes:
+  post-volume:

@@ -154,7 +154,8 @@ impl russh::server::Handler for SshSession {
         _: &str,
         pkey: &russh_keys::key::PublicKey,
     ) -> Result<russh::server::Auth, Self::Error> {
-        let auth_file = "/Users/arekouzounian/.ssh/authorized_keys";
+        let srv_cfg = SERVER_CONFIG.get().unwrap();
+        let auth_file = srv_cfg.authorized_key_file.as_str();
         let file = std::fs::File::open(auth_file)?;
         let buf_reader = BufReader::new(file);
 
