@@ -11,6 +11,8 @@ export const revalidate = 60;
 export async function generateStaticParams() {
   let p = path.resolve(process.cwd(), 'app', 'static');
   let dirs = fs.readdirSync(p).filter((dir) => {
+    if (!fs.statSync(path.join(p, dir)).isDirectory()) { return false; }
+
     let inner_p = path.join(p, dir);
     let inner_files = fs.readdirSync(inner_p); 
     for (var file of inner_files) {

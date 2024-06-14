@@ -6,6 +6,10 @@
   padding-left: 5%; 
   list-style-type:square; 
 }
+.content-container ol {
+  padding-left: 8%; 
+  list-style: upper-roman;
+}
 .content-container a {
   font-weight: bold; 
   color: slategray; 
