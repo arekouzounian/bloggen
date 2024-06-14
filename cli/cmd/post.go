@@ -16,8 +16,7 @@ var postCmd = &cobra.Command{
 	Long: `To create a new blog post, use the init command: 
 	
 	bloggen post init <blog post name>
-
-Future: post upload (TODO)`,
+`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("post called")
 	},
