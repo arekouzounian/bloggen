@@ -1,0 +1,11 @@
+include: 
+  - server/server.yaml
+  - bloggen-frontend/frontend.yaml
+
+volumes:
+  post-volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: ./bloggen-frontend/app/static
+      o: bind

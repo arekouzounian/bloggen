@@ -1,0 +1,2 @@
+# Post Directory 
+This directory is where post data will be stored. Each post will be housed in its own directory, generated with the cli tool (`bloggen post init`), then uploaded to the server (`bloggen post upload`)

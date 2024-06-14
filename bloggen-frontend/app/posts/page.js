@@ -7,16 +7,18 @@ export const revalidate = 60;
 
 export default function Page() {
     const p = path.resolve(process.cwd(), 'app', 'static'); 
-    const posts = fs.readdirSync(p);
+    let posts = fs.readdirSync(p);
 
     const stats = new Map(); 
-    posts.forEach((post, _) => {
-        stats.set(post, fs.statSync(path.join(p, post)));
 
-        let a = fs.statSync(p);
-
-        a.ctime
-    }); 
+    posts = posts.filter((post) => {
+        let stat = fs.statSync(path.join(p, post)); 
+        if (stat.isDirectory()) {
+            stats.set(post, stat);
+            return true;
+        }
+        return false; 
+    })
 
     posts.sort((a, b) => 
         stats.get(a).ctime - stats.get(b).ctime 

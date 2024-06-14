@@ -1,0 +1,13 @@
+services: 
+  server:
+    build: . 
+    ports: 
+      - "2222:2222"
+    volumes: 
+      - post-volume:/frontend-posts
+    secrets: 
+      - authorized_key_file
+
+secrets: 
+  authorized_key_file:
+    file: ~/.ssh/authorized_keys
