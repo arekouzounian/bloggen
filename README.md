@@ -22,9 +22,6 @@ Once you have that, you can do the following:
 ```sh
 # Via HTTPS
 $ git clone https://github.com/arekouzounian/bloggen.git
-
-# Via SSH
-$ git clone git@github.com:arekouzounian/bloggen.git
 ```
 2. **Compose the containers**:
 ```sh
@@ -50,8 +47,6 @@ docker compose down
 # Via HTTPS
 $ git clone https://github.com/arekouzounian/bloggen.git
 
-# Via SSH
-$ git clone git@github.com:arekouzounian/bloggen.git
 ```
 2. **Configure CLI**:
 ```sh
