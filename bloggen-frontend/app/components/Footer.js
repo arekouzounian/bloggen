@@ -85,10 +85,18 @@ const ThemeSwitcher = () => {
 export default function Footer({ copyrightText }) {
 
   useEffect(() => {
-    if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      document.documentElement.classList.add('dark')
-    } else {
-      document.documentElement.classList.remove('dark')
+    if (!('theme' in localStorage))
+    {
+      localStorage.setItem('theme', 'light');
+      document.documentElement.classList.remove('dark'); //if it exists
+    }
+    else if (localStorage.theme === 'dark')
+    {
+      document.documentElement.classList.add('dark');
+    }
+    else 
+    {
+      document.documentElement.classList.remove('dark');
     }
   });
 
