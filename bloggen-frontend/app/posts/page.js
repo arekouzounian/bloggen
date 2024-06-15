@@ -9,39 +9,26 @@ export default function Page() {
     const p = path.resolve(process.cwd(), 'app', 'static'); 
     let posts = fs.readdirSync(p);
 
-    const stats = new Map(); 
-
-    posts = posts.filter((post) => {
-        let stat = fs.statSync(path.join(p, post)); 
-        if (stat.isDirectory()) {
-            stats.set(post, stat);
-            return true;
-        }
-        return false; 
-    })
-
-    posts.sort((a, b) => 
-        stats.get(a).ctime - stats.get(b).ctime 
-    )
+    posts = posts.filter((post) => 
+        fs.statSync(path.join(p, post)).isDirectory()
+    );
 
     const descriptions = new Map(); 
     const titles = new Map(); 
-    let js = null; 
+    const js = new Map(); 
+
     posts.forEach((post, _) => {
         let meta_path = path.join(p, post, "meta.json")
-        let desc = "no description provided";
-        let title = post; 
 
         if (fs.existsSync(meta_path)) {
             let meta = fs.readFileSync(meta_path).toString();
-            js = JSON.parse(meta);
-            desc = js.Description != null ? js.Description : desc; 
-            title = js.Title != null ? js.Title : title; 
+            js.set(post, JSON.parse(meta));
         }
-
-        descriptions.set(post, desc);
-        titles.set(post, title);
     });
+
+    posts.sort((a, b) => 
+        js.get(a).LastChanged - js.get(b).LastChanged 
+    )
 
     return (
         <div className="text-center">
@@ -50,8 +37,8 @@ export default function Page() {
                 {posts.map((post, i) => 
                     <a key={i} className="box-content shadow-md border-2 rounded-md p-3 hover:animate-pulse" href={"./posts/" + post}>
                         <div>
-                            <p className='bold underline'>{titles.get(post)}</p>
-                            <p className="italic opacity-70">{descriptions.get(post)}</p>
+                            <p className='bold underline'>{js.get(post).Title}</p>
+                            <p className="italic opacity-70">{js.get(post).Description}</p>
                         </div>
                     </a>)}
             </div>
