@@ -338,7 +338,7 @@ impl russh_sftp::server::Handler for SftpSession {
         let mut full_path = srv_cfg.sftp_base_dir.as_ref().unwrap().clone();
 
         // maybe fix with regex down the line
-        if path.find("..").is_some() {
+        if path.find("../").is_some() {
             error!(
                 "Client {} trying to access a directory outside of scope: {}",
                 id, path
