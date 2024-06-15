@@ -2,6 +2,15 @@ include:
   - server/server.yaml
   - bloggen-frontend/frontend.yaml
 
+services:
+  nginx:
+    build: ./nginx
+    ports:
+      - 80:80
+      - 443:443
+    depends_on:
+      - frontend 
+
 volumes:
   post-volume:
     driver: local
