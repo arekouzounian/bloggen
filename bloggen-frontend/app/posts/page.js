@@ -25,19 +25,23 @@ export default function Page() {
     )
 
     const descriptions = new Map(); 
+    const titles = new Map(); 
+    let js = null; 
     posts.forEach((post, _) => {
         let meta_path = path.join(p, post, "meta.json")
         let desc = "no description provided";
+        let title = post; 
 
         if (fs.existsSync(meta_path)) {
             let meta = fs.readFileSync(meta_path).toString();
-            let js = JSON.parse(meta);
+            js = JSON.parse(meta);
             desc = js.Description != null ? js.Description : desc; 
+            title = js.Title != null ? js.Title : title; 
         }
 
         descriptions.set(post, desc);
-    })
-    
+        titles.set(post, title);
+    });
 
     return (
         <div className="text-center">
@@ -46,7 +50,7 @@ export default function Page() {
                 {posts.map((post, i) => 
                     <a key={i} className="box-content shadow-md border-2 rounded-md p-3 hover:animate-pulse" href={"./posts/" + post}>
                         <div>
-                            <p className='bold underline'>{post}</p>
+                            <p className='bold underline'>{titles.get(post)}</p>
                             <p className="italic opacity-70">{descriptions.get(post)}</p>
                         </div>
                     </a>)}

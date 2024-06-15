@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gomarkdown/markdown"
@@ -294,4 +295,17 @@ func UpdateTimeStampsInMeta(meta_file_path string, timestamp int64) error {
 	}
 
 	return os.WriteFile(meta_file_path, b, 0666)
+}
+
+// Checks if the post name for `bloggen post init` is valid
+// Essentially just checks that it doesn't have whitespace or special characters
+func IsValidPostName(post_name string) bool {
+	post_name = strings.ToLower(post_name)
+
+	for _, r := range post_name {
+		if (r < 97 || r > 122) && r != 45 {
+			return false
+		}
+	}
+	return true
 }

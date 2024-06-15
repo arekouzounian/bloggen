@@ -50,10 +50,16 @@ export default function Page({ params }) {
 
   let metaPath = path.join(post_dir, "meta.json");
   exists = fs.existsSync(metaPath);
-  let js;
+  let js = null; 
   if (exists) {
     let meta = fs.readFileSync(path.join(post_dir, "meta.json")).toString();
     js = JSON.parse(meta);
+  }
+
+  let title = postname; 
+  if (js != null)
+  {
+    title = js.Title; 
   }
 
   
@@ -69,7 +75,7 @@ export default function Page({ params }) {
   
   return (
     <div className="dark:bg-blue-850 dark:text-white border-2 rounded-md p-4 m-2 shadow-lg">
-      <h1 className="text-3xl font-bold underline text-center m-3 ">{postname}</h1>
+      <h1 className="text-3xl font-bold underline text-center m-3 ">{title}</h1>
       <MetaHolder data={js} />
       <div className='content-container' dangerouslySetInnerHTML={{__html: data}}></div>
       <a href="/posts" className="flex flex-col items-center font-medium text-slate-500 dark:text-gray hover:underline">back</a>

@@ -28,6 +28,11 @@ The assets folder is where you can place anything you may be referencing in the 
 			return
 		}
 		name := args[0]
+		if !IsValidPostName(name) {
+			fmt.Println("Blog post names must be alphabetical, separated by '-' characters if desired. You will be able to have more specialized post titles under the 'Post Title' prompt.")
+			return
+		}
+
 		output, err := cmd.Flags().GetString("output")
 		if err != nil {
 			fmt.Println(err.Error())

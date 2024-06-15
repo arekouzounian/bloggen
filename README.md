@@ -1,6 +1,15 @@
-# bloggen 
+BlogGen 
 --- 
 A simplified blogging framework for personal use. 
+
+---
+**Table of Contents**
+- [Project Structure](#project-structure)
+- [Installation](#installation)
+  - [Server-side](#server-side)
+  - [Client-Side](#client-side)
+- [Usage](#usage)
+---
 
 The rough ideas for the project can be found in [the idea doc](./idea-doc.md), where I initially put my ideas for the project. 
 
@@ -9,6 +18,16 @@ This framework is intended to allow one to set-up and add to a simple web-based 
 The goal was for these tools to be developed for my own personal blog, but a secondary goal is to allow this set of tools to be configurable in such a way that anyone could use this to deploy their own personal blog. 
 
 The web-based frontend will be housed in the [frontend folder](./bloggen-frontend/), the command-line interface code will be in [the cli folder](./cli/), and  server-side code exists in [the server folder](./server/) 
+
+
+
+# Project Structure
+This project is essentially three main parts: 
+1. A [CLI client](./cli/), written in Go, that helps to generate post structures and update/upload them
+2. An [SSH server](./server/), written in Rust, that implements a modified version of SFTP that handles uploads from the client and places them according to a JSON configuration
+3. A [Next.js frontend](./bloggen-frontend/), written in React, that implements a web frontend which displays posts and handles page data/server-side page generation.
+
+
 
 # Installation 
 To install, you must first have SSH access to the target machine that will be hosting the blog. As of right now, the only SSH auth method is SSH key auth, so you need to have a keypair that can authenticate to the server properly. 
@@ -41,7 +60,7 @@ $ docker compose up --detach
 docker compose down
 ```
 
-## Client-Side: 
+## Client-Side 
 1. **Clone the repo**:
 ```sh
 # Via HTTPS
@@ -85,3 +104,5 @@ The basic usage loop is as follows:
         echo export BLOGGEN_SERVER=<your_server_ip>:2222 >> ~/.zshrc
     ```
     The port defaults to port 2222, but if you'd like to change it, you would need to change it in the above declaration, as well as the `port` key in the  `server/docker.json` file. If you do make this change, make sure to re-build the docker containers accordingly.
+
+    If you're already in the post directory, you needn't specify the target flag, and can simply run `bloggen post upload`, assuming the other information has been configured/defaulted correctly. 

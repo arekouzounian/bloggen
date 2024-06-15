@@ -26,7 +26,11 @@ var uploadCmd = &cobra.Command{
 	Short: "Uploads the post from the target directory to the given server",
 	Long: `Sends the given directory (default '.') to the bloggen server via sftp. 
 The directory should be in canonical bloggen structure; you can create the proper structure using the 'bloggen post init' command. 
-This command will automatically attempt to convert the contained markdown to HTML. If you want to stop this, you can use the --no-conv flag.`,
+
+This command will automatically attempt to convert the contained markdown to HTML. If you want to stop this, you can use the --no-conv flag.
+
+When converting to HTML, links to files within the markdown document will automatically be intercepted, and these files will be copied into the assets folder. 
+To this end, make sure that all of your linked local files are accessible, and have absolute paths.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		target, err := cmd.Flags().GetString("target")
 		if err != nil {
