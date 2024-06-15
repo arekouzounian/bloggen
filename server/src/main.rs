@@ -244,6 +244,10 @@ impl russh_sftp::server::Handler for SftpSession {
         // only allows base directory to be accessed through sftp
         if let Some(ind) = filename.find('/') {
             if ind == 0 {
+                error!(
+                    "Client {} trying to access a disallowed directory: {}",
+                    id, filename
+                );
                 return Err(StatusCode::PermissionDenied);
             }
         }
@@ -262,6 +266,7 @@ impl russh_sftp::server::Handler for SftpSession {
         {
             let mut mutex_opened_files = self.open_files.lock().await;
             if mutex_opened_files.contains_key(&full_path) {
+                error!("Opened files map does not contain path {} ", full_path);
                 return Err(StatusCode::Failure);
             } else {
                 mutex_opened_files.insert(full_path.clone(), file);
@@ -334,12 +339,20 @@ impl russh_sftp::server::Handler for SftpSession {
 
         // maybe fix with regex down the line
         if path.find("..").is_some() {
+            error!(
+                "Client {} trying to access a directory outside of scope: {}",
+                id, path
+            );
             return Err(StatusCode::PermissionDenied);
         }
 
         match path.find("/") {
             Some(ind) => {
                 if ind == 0 {
+                    error!(
+                        "Client {} trying to access an absolutely-pathed directory: {}",
+                        id, path
+                    );
                     return Err(StatusCode::PermissionDenied);
                 }
             }
