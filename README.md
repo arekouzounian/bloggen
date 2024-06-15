@@ -1,3 +1,5 @@
+![logo](logo.svg)
+
 BlogGen 
 --- 
 A simplified blogging framework for personal use. 
