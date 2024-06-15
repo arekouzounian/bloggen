@@ -1,7 +1,0 @@
-{
-    "interface":"127.0.0.1", 
-    "port": "2222",
-    "log_file_path": "bloggen-server.log",
-    "authorized_key_file":"/Users/arekouzounian/.ssh/authorized_keys",
-    "sftp_base_dir":"/Users/arekouzounian/Documents/Projects/bloggen/bloggen-frontend/app/static"
-}

@@ -55,6 +55,17 @@ export default function Page({ params }) {
     let meta = fs.readFileSync(path.join(post_dir, "meta.json")).toString();
     js = JSON.parse(meta);
   }
+
+  
+  const pubPath = path.resolve(process.cwd(), 'public', 'assets');
+  let assPath = path.join(post_dir, "assets");
+  let assets = fs.readdirSync(assPath);
+  assets.forEach((asset) => {
+    let final_path = path.join(pubPath, asset);
+    if (!fs.existsSync(final_path)) {
+      fs.copyFileSync(path.join(assPath, asset), path.join(pubPath, asset));
+    }
+  });
   
   return (
     <div className="dark:bg-blue-850 dark:text-white border-2 rounded-md p-4 m-2 shadow-lg">

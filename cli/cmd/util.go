@@ -42,10 +42,20 @@ func InterceptLinks(root ast.Node, validatedDirectoryPath string) (ast.Node, err
 		}
 	}
 	target_folder := filepath.Join(validatedDirectoryPath, "assets")
+	const FINAL_ENCODING = "/assets"
 
 	ast.WalkFunc(root, func(node ast.Node, entering bool) ast.WalkStatus {
-		if link, ok := node.(*ast.Link); entering && ok {
-			link_s := string(link.Destination)
+		link, is_link := node.(*ast.Link)
+		img, is_img := node.(*ast.Image)
+
+		if entering && (is_link || is_img) {
+			var link_s string
+			if is_link {
+				link_s = string(link.Destination)
+			} else {
+				link_s = string(img.Destination)
+			}
+
 			stat, err := os.Stat(link_s)
 			if err == nil {
 				// real file, copy to local and convert
@@ -61,12 +71,11 @@ func InterceptLinks(root ast.Node, validatedDirectoryPath string) (ast.Node, err
 					return ast.Terminate
 				}
 
-				rel, err := filepath.Rel(validatedDirectoryPath, dest_abs)
-				if err != nil {
-					return ast.Terminate
+				if is_link {
+					link.Destination = []byte(filepath.Join(FINAL_ENCODING, stat.Name()))
+				} else {
+					img.Destination = []byte(filepath.Join(FINAL_ENCODING, stat.Name()))
 				}
-
-				link.Destination = []byte(rel)
 			}
 		}
 
