@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -339,24 +338,35 @@ impl russh_sftp::server::Handler for SftpSession {
         let mut full_path = srv_cfg.sftp_base_dir.as_ref().unwrap().clone();
 
         // maybe fix with regex down the line
-        let new_p = std::path::Path::new(&path);
-        let empty = Path::new("");
-
-        // new_p.parent().unwrap().as_os_str().to_str()
-        if let Some(parent_path) = new_p.parent() {
-            if parent_path != empty {
-                error!(
-                    "Client on id {} trying to access out of scope directory: {}",
-                    id, path
-                );
-                return Err(StatusCode::PermissionDenied);
-            }
-        } else {
+        if path.find("../").is_some() {
             error!(
-                "Client on id {} trying to access malformed directory: {}",
+                "Client {} trying to access a directory outside of scope: {}",
                 id, path
             );
             return Err(StatusCode::PermissionDenied);
+        }
+
+        match path.find("/") {
+            Some(ind) => {
+                if ind == 0 {
+                    error!(
+                        "Client {} trying to access an absolutely-pathed directory: {}",
+                        id, path
+                    );
+                    return Err(StatusCode::PermissionDenied);
+                }
+            }
+            _ => (),
+        };
+        match path.find("./") {
+            Some(ind) => {
+                if ind == 0 {
+                    full_path.push_str(&path.as_str()[2..])
+                } else {
+                    return Err(StatusCode::PermissionDenied);
+                }
+            }
+            _ => (),
         }
 
         if full_path.eq(srv_cfg.sftp_base_dir.as_ref().unwrap()) {
