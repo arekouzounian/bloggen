@@ -3,51 +3,81 @@
 @tailwind components;
 
 .content-container ul {
-  padding-left: 5%; 
-  list-style-type:square; 
-}
-.content-container ol {
-  padding-left: 8%; 
-  list-style: upper-roman;
-}
-.content-container a {
-  font-weight: bold; 
-  color: slategray; 
-  text-decoration: underline; 
-}
-.content-container a:hover {
-  @apply animate-pulse;
+    padding-left: 5%;
+    list-style-type: square;
 }
 
-.content-container h1{
-  font-weight: bold; 
-  font-size: 140%; 
+.content-container ol {
+    padding-left: 8%;
+    list-style: upper-roman;
 }
-.content-container h2{
-  font-weight: bold; 
-  font-size: 130%; 
+
+.content-container a {
+    font-weight: bold;
+    color: slategray;
+    text-decoration: underline;
 }
-.content-container h3{
-  font-weight: bold; 
-  font-size: 120%; 
+
+.content-container a:hover {
+    @apply animate-pulse;
 }
-.content-container h4{
-  font-weight: bold; 
-  font-size: 110%; 
+
+.content-container h1 {
+    font-weight: bold;
+    font-size: 140%;
+}
+
+.content-container h2 {
+    font-weight: bold;
+    font-size: 130%;
+}
+
+.content-container h3 {
+    font-weight: bold;
+    font-size: 120%;
+}
+
+.content-container h4 {
+    font-weight: bold;
+    font-size: 110%;
 }
 
 .content-container p {
-  padding-top: 2%; 
-  padding-bottom: 2%; 
+    padding-top: 2%;
+    padding-bottom: 2%;
+}
+
+pre {
+    text-wrap: balance;
+    border-radius: .75em;
+    border: 1px solid black;
+
+    @apply shadow-md;
+    @apply bg-slate-300;
+    @apply dark:text-white;
+    @apply dark:bg-slate-700;
+    @apply dark:border-white;
+    @apply p-2;
+
+}
+
+p code {
+    border: 1px solid black;
+    border-radius: .25em;
+    padding: 2px;
+
+    @apply bg-slate-300;
+    @apply dark:bg-slate-700;
+    @apply dark:border-white;
 }
 
 .content-container hr {
-  border: 1px solid gray; 
-  border-radius: 10px; 
+    border: 1px solid gray;
+    border-radius: 10px;
 }
 
 @layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+    .text-balance {
+        text-wrap: balance;
+    }
 }
