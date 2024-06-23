@@ -6,6 +6,8 @@ package cmd
 import (
 	"fmt"
 	"io/fs"
+	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,23 +15,26 @@ import (
 	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/skeema/knownhosts"
 )
 
 const (
 	DEFAULT_SERVER_ADDR = "localhost:2222"
 	SERVER_ENV_KEY      = "BLOGGEN_SERVER"
+	EMPTY_STR           = ""
 )
 
 // uploadCmd represents the upload command
 var uploadCmd = &cobra.Command{
 	Use:   "upload",
 	Short: "Uploads the post from the target directory to the given server",
-	Long: `Sends the given directory (default '.') to the bloggen server via sftp. 
-The directory should be in canonical bloggen structure; you can create the proper structure using the 'bloggen post init' command. 
+	Long: `Sends the given directory (default '.') to the bloggen server via sftp.
+The directory should be in canonical bloggen structure; you can create the proper structure using the 'bloggen post init' command.
 
 This command will automatically attempt to convert the contained markdown to HTML. If you want to stop this, you can use the --no-conv flag.
 
-When converting to HTML, links to files within the markdown document will automatically be intercepted, and these files will be copied into the assets folder. 
+When converting to HTML, links to files within the markdown document will automatically be intercepted, and these files will be copied into the assets folder.
 To this end, make sure that all of your linked local files are accessible, and have absolute paths.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		target, err := cmd.Flags().GetString("target")
@@ -52,21 +57,30 @@ To this end, make sure that all of your linked local files are accessible, and h
 			fmt.Println("Fatal: keyfile flag not found")
 			return
 		}
+		hostsfile, err := cmd.Flags().GetString("hostfile")
+		if err != nil {
+			fmt.Println("Fatal: hostfile flag not found")
+			return
+		}
 
-		if host == "" {
+		if host == EMPTY_STR {
 			if env_key, exists := os.LookupEnv(SERVER_ENV_KEY); exists {
 				host = env_key
 			} else {
 				host = DEFAULT_SERVER_ADDR
 			}
 		}
-		if keypath == "" {
-			homedir, err := os.UserHomeDir()
-			if err != nil {
-				fmt.Printf("Error accessing default keyfile: %v", err)
-			}
 
+		homedir, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Printf("Error accessing default keyfile: %v", err)
+			return
+		}
+		if keypath == EMPTY_STR {
 			keypath = filepath.Join(homedir, ".ssh", "id_rsa")
+		}
+		if hostsfile == EMPTY_STR {
+			hostsfile = filepath.Join(homedir, ".ssh", "known_hosts")
 		}
 
 		target, err = filepath.Abs(target)
@@ -125,7 +139,7 @@ To this end, make sure that all of your linked local files are accessible, and h
 			}
 		}
 
-		err = UploadPost(target, host, keypath)
+		err = UploadPost(target, host, keypath, hostsfile)
 		if err != nil {
 			fmt.Println(err.Error())
 			return
@@ -135,9 +149,7 @@ To this end, make sure that all of your linked local files are accessible, and h
 	},
 }
 
-// TODO: create secure host callback using known hosts
-
-func UploadPost(directory_path string, host string, keypath string) error {
+func UploadPost(directory_path string, host string, keypath string, hostsfile string) error {
 	key, err := os.ReadFile(keypath)
 	if err != nil {
 		return fmt.Errorf("unable to read private key: %v", err)
@@ -149,11 +161,39 @@ func UploadPost(directory_path string, host string, keypath string) error {
 		return fmt.Errorf("unable to parse private key: %v", err)
 	}
 
+	kh, err := knownhosts.New(hostsfile)
+	if err != nil {
+		return fmt.Errorf("Error parsing hostfile %s: %v", hostsfile, err)
+	}
+
+	// Create a custom permissive hostkey callback which still errors on hosts
+	// with changed keys, but allows unknown hosts and adds them to known_hosts
+	cb := ssh.HostKeyCallback(func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		err := kh(hostname, remote, key)
+		if knownhosts.IsHostKeyChanged(err) {
+			return fmt.Errorf("REMOTE HOST IDENTIFICATION HAS CHANGED for host %s! This may indicate a MitM attack.", hostname)
+		} else if knownhosts.IsHostUnknown(err) {
+			f, ferr := os.OpenFile(hostsfile, os.O_APPEND|os.O_WRONLY, 0600)
+			if ferr == nil {
+				defer f.Close()
+				ferr = knownhosts.WriteKnownHost(f, hostname, remote, key)
+			}
+			if ferr == nil {
+				log.Printf("Added host %s to known_hosts\n", hostname)
+			} else {
+				log.Printf("Failed to add host %s to known_hosts: %v\n", hostname, ferr)
+			}
+			return nil // permit previously-unknown hosts (warning: may be insecure)
+		}
+		return err
+	})
+
 	config := &ssh.ClientConfig{
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // change this later
+		HostKeyCallback:   cb,
+		HostKeyAlgorithms: kh.HostKeyAlgorithms(host),
 	}
 
 	// Connect to SSH server
@@ -232,5 +272,6 @@ func init() {
 	uploadCmd.Flags().StringP("target", "t", ".", "Specifies the target directory to be uploaded. Default '.'")
 	uploadCmd.Flags().StringP("server", "s", "", "Specifies the target bloggen server to upload to. If not specified, and no BLOGGEN_SERVER environment variable is configured, defaults to 'localhost:2222'")
 	uploadCmd.Flags().StringP("keyfile", "k", "", "Specifies the target key file to use for ssh authentication. If not specified, defaults to `~/.ssh/id_rsa`")
+	uploadCmd.Flags().StringP("hostfile", "f", "", "Specifies the target known_hosts file to use for ssh authentication. If not specified, defaults to `~/.ssh/known_hosts`")
 	uploadCmd.Flags().Bool("no-conv", false, "Skips conversion of markdown files to HTML if they're already converted.")
 }
