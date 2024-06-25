@@ -255,7 +255,12 @@ impl russh_sftp::server::Handler for SftpSession {
 
         // do we parse pflags or do we make it write only?
         info!("attempting to open {}", &full_path);
-        let file = match File::options().write(true).create(true).open(&full_path) {
+        let file = match File::options()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&full_path)
+        {
             Ok(f) => f,
             Err(e) => {
                 error!("Error opening file {} {:?}", &full_path, e);
