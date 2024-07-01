@@ -19,7 +19,7 @@ const sunIcon = (
       clipPath="url(#clip0_192_823)"
     >
       <path
-        className="text-black text-white"
+        className="text-white"
         d="M12.5 17a5 5 0 100-10 5 5 0 000 10zM12.5 1v2M12.5 21v2M4.72 4.22l1.42 1.42M18.86 18.36l1.42 1.42M1.5 12h2M21.5 12h2M4.72 19.78l1.42-1.42M18.86 5.64l1.42-1.42"></path>
     </g>
     <defs>
