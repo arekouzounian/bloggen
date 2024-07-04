@@ -42,41 +42,6 @@ To this end, make sure that all of your linked local files are accessible, and h
 			fmt.Println("Fatal: no-conv flag not found")
 			return
 		}
-		host, err := cmd.Flags().GetString("server")
-		if err != nil {
-			fmt.Println("Fatal: host flag not found")
-			return
-		}
-		keypath, err := cmd.Flags().GetString("keyfile")
-		if err != nil {
-			fmt.Println("Fatal: keyfile flag not found")
-			return
-		}
-		hostsfile, err := cmd.Flags().GetString("hostfile")
-		if err != nil {
-			fmt.Println("Fatal: hostfile flag not found")
-			return
-		}
-
-		if host == EMPTY_STR {
-			if env_key, exists := os.LookupEnv(SERVER_ENV_KEY); exists {
-				host = env_key
-			} else {
-				host = DEFAULT_SERVER_ADDR
-			}
-		}
-
-		homedir, err := os.UserHomeDir()
-		if err != nil {
-			fmt.Printf("Error accessing default keyfile: %v", err)
-			return
-		}
-		if keypath == EMPTY_STR {
-			keypath = filepath.Join(homedir, ".ssh", "id_rsa")
-		}
-		if hostsfile == EMPTY_STR {
-			hostsfile = filepath.Join(homedir, ".ssh", "known_hosts")
-		}
 
 		target, err = filepath.Abs(target)
 		if err != nil {
@@ -134,7 +99,7 @@ To this end, make sure that all of your linked local files are accessible, and h
 			}
 		}
 
-		err = UploadPost(target, host, keypath, hostsfile)
+		err = UploadPost(target, Host, Keypath, Hostsfile)
 		if err != nil {
 			fmt.Println(err.Error())
 			return
@@ -218,8 +183,5 @@ func init() {
 	postCmd.AddCommand(uploadCmd)
 
 	uploadCmd.Flags().StringP("target", "t", ".", "Specifies the target directory to be uploaded. Default '.'")
-	uploadCmd.Flags().StringP("server", "s", "", "Specifies the target bloggen server to upload to. If not specified, and no BLOGGEN_SERVER environment variable is configured, defaults to 'localhost:2222'")
-	uploadCmd.Flags().StringP("keyfile", "k", "", "Specifies the target key file to use for ssh authentication. If not specified, defaults to `~/.ssh/id_rsa`")
-	uploadCmd.Flags().StringP("hostfile", "f", "", "Specifies the target known_hosts file to use for ssh authentication. If not specified, defaults to `~/.ssh/known_hosts`")
 	uploadCmd.Flags().Bool("no-conv", false, "Skips conversion of markdown files to HTML if they're already converted.")
 }
