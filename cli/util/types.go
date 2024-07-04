@@ -1,15 +1,7 @@
-package cmd
-
 /*
 Copyright © 2024 Arek Ouzounian <arek@arekouzounian.com>
 */
-
-// stores absolute paths of valid post directory elements
-type ValidateDirectoryStructureResult struct {
-	MarkdownFilePath string
-	AssetsDirPath    string
-	MetaFilePath     string
-}
+package util
 
 type BlogPostMetaData struct {
 	LastChanged int64
@@ -19,6 +11,13 @@ type BlogPostMetaData struct {
 	Description string
 
 	// tags, thumbnail/img?
+}
+
+// stores absolute paths of valid post directory elements
+type ValidateDirectoryStructureResult struct {
+	MarkdownFilePath string
+	AssetsDirPath    string
+	MetaFilePath     string
 }
 
 type CheckList[K comparable] struct {

@@ -32,7 +32,6 @@ var postCmd = &cobra.Command{
 	bloggen post init <blog post name>
 `,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("post called")
 		var err error
 
 		Host, err = cmd.Flags().GetString("server")

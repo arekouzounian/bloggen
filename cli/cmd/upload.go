@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/arekouzounian/bloggen/util"
 	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
 )
@@ -43,7 +44,7 @@ To this end, make sure that all of your linked local files are accessible, and h
 			return
 		}
 
-		res, err := ValidateDirectoryStructure(target)
+		res, err := util.ValidateDirectoryStructure(target)
 		if err != nil {
 			fmt.Printf("Fatal: Invalid directory structure: %v\n", err)
 			return
@@ -56,7 +57,7 @@ To this end, make sure that all of your linked local files are accessible, and h
 			return
 		}
 
-		err = UpdateTimeStampsInMeta(res.MetaFilePath, stat.ModTime().Unix())
+		err = util.UpdateTimeStampsInMeta(res.MetaFilePath, stat.ModTime().Unix())
 		if err != nil {
 			fmt.Printf("Fatal: Unable to update timestamps in meta.json: %v\n", err)
 			return
@@ -68,21 +69,21 @@ To this end, make sure that all of your linked local files are accessible, and h
 				fmt.Printf("Fatal: Unable to read file %s: %v\n", md_file, err)
 				return
 			}
-			ast, err := InterceptLinks(GetDocumentAST(file), filepath.Dir(md_file))
+			ast, err := util.InterceptLinks(util.GetDocumentAST(file), filepath.Dir(md_file))
 			if err != nil {
 				fmt.Printf("Fatal: Error intercepting document links: %v\n", err)
 				return
 			}
 			new_path := md_file[:strings.LastIndex(md_file, ".")] + ".html"
 
-			err = os.WriteFile(new_path, RenderHTML(ast), 0666)
+			err = os.WriteFile(new_path, util.RenderHTML(ast), 0666)
 			if err != nil {
 				fmt.Printf("Fatal: Error writing to file %s: %v\n", new_path, err)
 				return
 			}
 		} else {
 			// check that html file exists
-			hasHtml, err := FileExtensionExists(target, ".html")
+			hasHtml, err := util.FileExtensionExists(target, ".html")
 			if err != nil {
 				fmt.Printf("Fatal: Unable to read target directory %s: %v", target, err)
 				return
@@ -104,7 +105,7 @@ To this end, make sure that all of your linked local files are accessible, and h
 }
 
 func UploadPost(directory_path string, host string, keypath string, hostsfile string) error {
-	conn, err := NewSSHClient(host, keypath, hostsfile)
+	conn, err := util.NewSSHClient(host, keypath, hostsfile)
 	if err != nil {
 		return err
 	}

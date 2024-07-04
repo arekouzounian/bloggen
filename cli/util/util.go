@@ -1,159 +1,17 @@
-package cmd
-
 /*
 Copyright © 2024 Arek Ouzounian <arek@arekouzounian.com>
 */
+package util
 
 import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/gomarkdown/markdown"
-	"github.com/gomarkdown/markdown/ast"
-	"github.com/gomarkdown/markdown/html"
-	"github.com/gomarkdown/markdown/parser"
-	"github.com/skeema/knownhosts"
-	"golang.org/x/crypto/ssh"
 )
-
-func NewSSHClient(host string, keypath string, hostsfile string) (*ssh.Client, error) {
-	key, err := os.ReadFile(keypath)
-	if err != nil {
-		return nil, fmt.Errorf("unable to read private key: %v", err)
-	}
-
-	// Create the Signer for this private key.
-	signer, err := ssh.ParsePrivateKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse private key: %v", err)
-	}
-
-	kh, err := knownhosts.New(hostsfile)
-	if err != nil {
-		return nil, fmt.Errorf("Error parsing hostfile %s: %v", hostsfile, err)
-	}
-
-	// Create a custom permissive hostkey callback which still errors on hosts
-	// with changed keys, but allows unknown hosts and adds them to known_hosts
-	cb := ssh.HostKeyCallback(func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		err := kh(hostname, remote, key)
-		if knownhosts.IsHostKeyChanged(err) {
-			return fmt.Errorf("REMOTE HOST IDENTIFICATION HAS CHANGED for host %s! This may indicate a MitM attack.", hostname)
-		} else if knownhosts.IsHostUnknown(err) {
-			f, ferr := os.OpenFile(hostsfile, os.O_APPEND|os.O_WRONLY, 0600)
-			if ferr == nil {
-				defer f.Close()
-				ferr = knownhosts.WriteKnownHost(f, hostname, remote, key)
-			}
-			if ferr == nil {
-				log.Printf("Added host %s to known_hosts\n", hostname)
-			} else {
-				log.Printf("Failed to add host %s to known_hosts: %v\n", hostname, ferr)
-			}
-			return nil // permit previously-unknown hosts (warning: may be insecure)
-		}
-		return err
-	})
-
-	config := &ssh.ClientConfig{
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-		},
-		HostKeyCallback:   cb,
-		HostKeyAlgorithms: kh.HostKeyAlgorithms(host),
-	}
-
-	// Connect to SSH server
-	conn, err := ssh.Dial("tcp", host, config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to SSH server: %v", err)
-	}
-
-	return conn, nil
-}
-
-func GetDocumentAST(md []byte) ast.Node {
-	extensions := parser.CommonExtensions | parser.AutoHeadingIDs | parser.NoEmptyLineBeforeBlock
-	return parser.NewWithExtensions(extensions).Parse(md)
-}
-
-func RenderHTML(root ast.Node) []byte {
-	htmlFlags := html.CommonFlags | html.HrefTargetBlank
-	opts := html.RendererOptions{Flags: htmlFlags}
-	renderer := html.NewRenderer(opts)
-
-	return markdown.Render(root, renderer)
-}
-
-// validatedDirectoryPath is the directory with canonical structure
-// that holds our files
-func InterceptLinks(root ast.Node, validatedDirectoryPath string) (ast.Node, error) {
-	var err error
-	if !filepath.IsAbs(validatedDirectoryPath) {
-		validatedDirectoryPath, err = filepath.Abs(validatedDirectoryPath)
-		if err != nil {
-			return nil, err
-		}
-	}
-	target_folder := filepath.Join(validatedDirectoryPath, "assets")
-	const FINAL_ENCODING = "/assets"
-
-	ast.WalkFunc(root, func(node ast.Node, entering bool) ast.WalkStatus {
-		link, is_link := node.(*ast.Link)
-		img, is_img := node.(*ast.Image)
-
-		if entering && (is_link || is_img) {
-			var link_s string
-			if is_link {
-				link_s = string(link.Destination)
-			} else {
-				link_s = string(img.Destination)
-			}
-
-			stat, err := os.Stat(link_s)
-			if err == nil {
-				// real file, copy to local and convert
-				source_abs, err := filepath.Abs(link_s)
-				if err != nil {
-					return ast.GoToNext
-				}
-
-				dest_abs := filepath.Join(target_folder, stat.Name())
-
-				err = CopyFile(source_abs, dest_abs)
-				if err != nil {
-					return ast.Terminate
-				}
-
-				if is_link {
-					link.Destination = []byte(filepath.Join(FINAL_ENCODING, stat.Name()))
-				} else {
-					img.Destination = []byte(filepath.Join(FINAL_ENCODING, stat.Name()))
-				}
-			}
-		}
-
-		return ast.GoToNext
-	})
-
-	if err != nil {
-		return nil, err
-	}
-	return root, nil
-}
-
-// https://github.com/gomarkdown/markdown
-// this is literally pulled directly from the readme
-func MDToHTML(md []byte) []byte {
-	return RenderHTML(GetDocumentAST(md))
-}
 
 // Returns the absolute path to the markdown file containing the post on success, or an error in the event of a failure.
 // directory_path should always be an absolute path

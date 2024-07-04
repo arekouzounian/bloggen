@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/arekouzounian/bloggen/util"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +29,7 @@ The assets folder is where you can place anything you may be referencing in the 
 			return
 		}
 		name := args[0]
-		if !IsValidPostName(name) {
+		if !util.IsValidPostName(name) {
 			fmt.Println("Blog post names must be alphabetical, separated by '-' characters if desired. You will be able to have more specialized post titles under the 'Post Title' prompt.")
 			return
 		}
@@ -59,7 +60,7 @@ The assets folder is where you can place anything you may be referencing in the 
 		// directory exists at <output>/ now.
 		output += "/"
 
-		err = WriteMetaDataFromInput(output)
+		err = util.WriteMetaDataFromInput(output)
 		if err != nil {
 			fmt.Printf("Error creating meta.json: %v", err)
 			return

@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/arekouzounian/bloggen/util"
 	"github.com/spf13/cobra"
 )
 
@@ -19,10 +20,10 @@ const (
 var conv = &cobra.Command{
 	Use:   "conv",
 	Short: "Converts markdown to HTML",
-	Long: `Converts the given markdown document to HTML. 
-An output name or location can be specified with the -o flag. 
+	Long: `Converts the given markdown document to HTML.
+An output name or location can be specified with the -o flag.
 
-Ex: 
+Ex:
 	bloggen conv test.md -o ~/test-conv.html`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) < 1 {
@@ -58,7 +59,7 @@ func ConvertMDToHTML(file_path string, target_location string) error {
 		return err
 	}
 
-	conv := MDToHTML(file)
+	conv := util.MDToHTML(file)
 
 	var name string
 	ext := ".html"
