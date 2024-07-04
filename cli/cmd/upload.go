@@ -14,12 +14,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const (
-	DEFAULT_SERVER_ADDR = "localhost:2222"
-	SERVER_ENV_KEY      = "BLOGGEN_SERVER"
-	EMPTY_STR           = ""
-)
-
 // uploadCmd represents the upload command
 var uploadCmd = &cobra.Command{
 	Use:   "upload",
