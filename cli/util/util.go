@@ -221,7 +221,7 @@ func IsValidPostName(post_name string) bool {
 	post_name = strings.ToLower(post_name)
 
 	for _, r := range post_name {
-		if (r < 97 || r > 122) && r != 45 {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
 			return false
 		}
 	}

@@ -30,7 +30,7 @@ The assets folder is where you can place anything you may be referencing in the 
 		}
 		name := args[0]
 		if !util.IsValidPostName(name) {
-			fmt.Println("Blog post names must be alphabetical, separated by '-' characters if desired. You will be able to have more specialized post titles under the 'Post Title' prompt.")
+			fmt.Println("Blog post names must be alphanumeric, separated by '-' characters if desired. You will be able to have more specialized post titles under the 'Post Title' prompt.")
 			return
 		}
 
