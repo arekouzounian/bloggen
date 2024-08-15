@@ -10,7 +10,7 @@ anyhow = "1.0.83"
 async-trait = "0.1.80"
 log = "0.4.21"
 once_cell = "1.19.0"
-russh = {version="0.43.0", features=["openssl"]}
+russh = {version="0.44.1", features=["openssl"]}
 russh-keys = "0.43.0"
 russh-sftp = "2.0.0"
 serde = "1.0.202"
