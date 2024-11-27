@@ -26,7 +26,6 @@ export async function generateStaticParams() {
   let x = dirs.map((dir) => ({
     postname: dir
   }));
-
   return x;
 }
 
