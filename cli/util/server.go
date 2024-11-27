@@ -34,9 +34,7 @@ func NewSSHClient(host string, keypath string, hostsfile string) (*ssh.Client, e
 	// with changed keys, but allows unknown hosts and adds them to known_hosts
 	cb := ssh.HostKeyCallback(func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		err := kh(hostname, remote, key)
-		if knownhosts.IsHostKeyChanged(err) {
-			return fmt.Errorf("REMOTE HOST IDENTIFICATION HAS CHANGED for host %s! This may indicate a MitM attack.", hostname)
-		} else if knownhosts.IsHostUnknown(err) {
+		if knownhosts.IsHostUnknown(err) {
 			f, ferr := os.OpenFile(hostsfile, os.O_APPEND|os.O_WRONLY, 0600)
 			if ferr == nil {
 				defer f.Close()
