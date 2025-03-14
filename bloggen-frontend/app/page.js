@@ -25,7 +25,7 @@ export default function Page() {
   });
 
   posts.sort((a, b) =>
-    js.get(a).LastChanged - js.get(b).LastChanged
+    js.get(b).LastChanged - js.get(a).LastChanged
   )
 
   return (
@@ -36,6 +36,7 @@ export default function Page() {
           <a key={i} className="box-content shadow-md border-2 rounded-md p-3 hover:animate-pulse" href={post}>
             <div>
               <p className='bold underline'>{js.get(post).Title}</p>
+              <p className='bold italic opacity-50 text-xs'>{new Date(js.get(post).LastChanged * 1000).toLocaleDateString()}</p>
               <p className="italic opacity-70">{js.get(post).Description}</p>
             </div>
           </a>)}

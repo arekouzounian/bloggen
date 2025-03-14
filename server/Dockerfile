@@ -1,4 +1,4 @@
-FROM rust:1.78 AS base 
+FROM rust:1.81 AS base 
 WORKDIR /usr/src/server 
 COPY . .
 
