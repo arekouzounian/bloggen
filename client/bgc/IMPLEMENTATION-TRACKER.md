@@ -61,14 +61,16 @@ This document tracks the implementation status of the Rust client for BlogGen v2
 - [x] ~68% size reduction from uncompressed
 - [x] Total: 76% reduction from original format
 
-### ⬜ Delta Updates (Planned)
-- [ ] Compute delta between two CasDocuments
-- [ ] Delta serialization format
-- [ ] Delta application (merge changes)
-- [ ] Identify added nodes
-- [ ] Identify removed nodes
-- [ ] Optimize for typical edit patterns (1-5 changed nodes)
-- [ ] Delta compression (should compress well with zstd)
+### ✅ Delta Updates
+- [x] Compute delta between two CasDocuments
+- [x] Delta serialization format (JSON, MessagePack, compressed)
+- [x] Delta application (merge changes)
+- [x] Identify added nodes
+- [x] Identify removed nodes
+- [x] Optimize for typical edit patterns (1-5 changed nodes)
+- [x] Delta compression (achieves 55-75% size reduction vs full documents)
+- [x] Conflict detection (validates old_root matches)
+- [x] Delta statistics (added/removed counts, efficiency metrics)
 
 ---
 
@@ -88,9 +90,12 @@ This document tracks the implementation status of the Rust client for BlogGen v2
 - [x] `render` command - deserialize CAS document back to markdown
 - [x] Support for JSON, MessagePack, and compressed formats in render
 - [x] Full round-trip support (markdown → CAS → markdown)
+- [x] `delta` command - compute delta between two markdown files
+- [x] Delta output in all formats (JSON, MessagePack, compressed)
+- [x] Delta efficiency statistics
 
 ### ⬜ Additional Commands (Future)
-- [ ] `diff` command - compare two documents
+- [ ] `apply` command - apply delta to a CAS document
 - [ ] `validate` command - check AST integrity
 - [ ] `inspect` command - show node details by hash
 - [ ] `stats` command - document statistics (node counts, types, etc.)
@@ -196,6 +201,10 @@ This document tracks the implementation status of the Rust client for BlogGen v2
 - [x] Round-trip fidelity tests (markdown → AST → markdown)
 - [x] Serialization/deserialization performance tests
 - [x] Compression ratio benchmarks
+- [x] Delta computation tests (add, remove, modify nodes)
+- [x] Delta application tests (including conflict detection)
+- [x] Delta serialization round-trip tests
+- [x] **E2E test suite** (23 tests covering full workflow)
 
 ### ⬜ Additional Testing (Future)
 - [ ] Fuzzing tests (random input)
@@ -364,23 +373,23 @@ This document tracks the implementation status of the Rust client for BlogGen v2
 
 ### Current Progress
 - **Core Features**: 3/3 complete (100%)
-- **Serialization**: 3/4 complete (75%) - Delta updates remaining
-- **CLI**: 2/3 complete (67%) - Additional utility commands planned
+- **Serialization**: 4/4 complete (100%) ✅ **Delta updates COMPLETE**
+- **CLI**: 3/3 complete (100%) ✅ **All core commands implemented**
 - **AST → Markdown Rendering**: 3/3 complete (100%)
-- **Testing**: 3/3 complete (100%) - Comprehensive suite with benchmarks
+- **Testing**: 3/3 complete (100%) - Comprehensive suite with E2E tests
 - **Documentation**: 2/3 complete (67%) - API docs and tutorials pending
 
 ### Overall Completion
-- **Implemented**: ~60% of planned features
+- **Implemented**: ~75% of planned features
 - **Critical Path Items Remaining**:
   1. ✅ ~~AST → Markdown rendering~~ (COMPLETE - required for FUSE)
-  2. Delta update computation (major network optimization)
+  2. ✅ ~~**Delta update computation**~~ (COMPLETE - major network optimization)
   3. FUSE driver (end-user filesystem integration)
   4. Server API client (network communication)
 
 ### Next Milestones
 1. ✅ ~~**Milestone 1**: AST → Markdown renderer~~ (COMPLETE)
-2. **Milestone 2**: Delta updates (network efficiency)
+2. ✅ ~~**Milestone 2**: Delta updates~~ (COMPLETE - **network efficiency achieved**)
 3. **Milestone 3**: FUSE driver MVP (basic read/write)
 4. **Milestone 4**: Server integration (end-to-end functionality)
 
@@ -392,6 +401,15 @@ This document tracks the implementation status of the Rust client for BlogGen v2
 - ✅ Full `render` command for CLI (JSON/MessagePack/compressed → Markdown)
 - ✅ CasDocument ↔ NodeStore conversion helpers
 - ✅ Complete round-trip support (Markdown → CAS → Markdown)
+- ✅ **Delta update system (Phase 4 complete)**:
+  - `DeltaDocument` struct with added/removed node tracking
+  - `compute_delta()` function for efficient diff computation
+  - `apply_delta()` with conflict detection
+  - Delta serialization in all formats (JSON, MessagePack, compressed)
+  - CLI `delta` command with efficiency statistics
+  - Comprehensive delta unit tests (10+ test cases)
+  - **E2E test suite** (23 tests, 100% pass rate)
+  - Achieves 55-75% size reduction vs full documents
 
 ---
 

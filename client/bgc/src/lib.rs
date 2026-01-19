@@ -31,12 +31,14 @@
 pub mod ast;
 pub mod cas;
 pub mod convert;
+pub mod http;
 pub mod render;
 
 // Re-export main types for convenience
 pub use ast::{AstNode, Blake3Hash};
-pub use cas::{CasDocument, CasNode, NodeStore};
+pub use cas::{CasDocument, CasNode, DeltaDocument, DeltaStats, NodeStore};
 pub use convert::parse_markdown;
+pub use http::Client;
 pub use render::{MarkdownRenderer, RenderError};
 
 /// Parse markdown from a file and return the root hash and populated NodeStore.

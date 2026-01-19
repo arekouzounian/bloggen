@@ -1,2 +1,11 @@
 .vscode/
 initial-posts/
+
+# Rust build artifacts
+**/target/
+
+# SQLx query cache
+# Uncomment to ignore if using live database during development
+# Commit if using offline mode for CI/CD (recommended)
+# See v2-server/SQLX-SETUP.md for details
+# **/.sqlx/

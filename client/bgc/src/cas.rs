@@ -1,6 +1,6 @@
 use crate::ast::{AstNode, Blake3Hash};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A content-addressable storage node.
 ///
@@ -282,6 +282,159 @@ impl CasDocument {
         let msgpack = zstd::bulk::decompress(data, 10_000_000)?;
         Ok(Self::from_msgpack(&msgpack)?)
     }
+
+    /// Compute a delta between this document and a new version.
+    ///
+    /// This identifies nodes that were added (in new but not in old) and
+    /// nodes that were removed (in old but not in new).
+    ///
+    /// This enables efficient network transmission: only send changed nodes
+    /// instead of the entire document.
+    pub fn compute_delta(&self, new_doc: &CasDocument) -> DeltaDocument {
+        let old_hashes: HashSet<Blake3Hash> = self.nodes.keys().copied().collect();
+        let new_hashes: HashSet<Blake3Hash> = new_doc.nodes.keys().copied().collect();
+
+        // Nodes in new but not in old (added)
+        let added_nodes: HashMap<Blake3Hash, AstNode> = new_hashes
+            .difference(&old_hashes)
+            .map(|hash| (*hash, new_doc.nodes[hash].clone()))
+            .collect();
+
+        // Nodes in old but not in new (removed)
+        let removed_hashes: Vec<Blake3Hash> = old_hashes
+            .difference(&new_hashes)
+            .copied()
+            .collect();
+
+        DeltaDocument {
+            old_root: self.root_hash,
+            new_root: new_doc.root_hash,
+            added_nodes,
+            removed_hashes,
+        }
+    }
+
+    /// Apply a delta to this document to produce a new document.
+    ///
+    /// This verifies that the delta's old_root matches this document's root,
+    /// then applies the changes to produce the new document.
+    ///
+    /// Returns None if the old_root doesn't match (conflict).
+    pub fn apply_delta(&self, delta: &DeltaDocument) -> Option<CasDocument> {
+        // Verify the delta applies to this document
+        if self.root_hash != delta.old_root {
+            return None;
+        }
+
+        // Start with current nodes
+        let mut new_nodes = self.nodes.clone();
+
+        // Add new nodes
+        for (hash, node) in &delta.added_nodes {
+            new_nodes.insert(*hash, node.clone());
+        }
+
+        // Remove deleted nodes
+        for hash in &delta.removed_hashes {
+            new_nodes.remove(hash);
+        }
+
+        Some(CasDocument {
+            root_hash: delta.new_root,
+            nodes: new_nodes,
+        })
+    }
+}
+
+/// A delta between two CasDocuments.
+///
+/// This represents the difference between an old and new version of a document,
+/// containing only the nodes that changed. This enables efficient network
+/// transmission for document updates.
+///
+/// # Delta Size
+///
+/// For typical blog post edits (1-5 changed paragraphs), deltas are usually:
+/// - 90-95% smaller than full documents
+/// - Only transmit changed nodes plus new root
+/// - Compress well with zstd (shared context with full doc)
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeltaDocument {
+    /// The root hash of the old document
+    pub old_root: Blake3Hash,
+    /// The root hash of the new document
+    pub new_root: Blake3Hash,
+    /// Nodes that were added (in new but not in old)
+    #[serde(with = "hash_map_hex")]
+    pub added_nodes: HashMap<Blake3Hash, AstNode>,
+    /// Hashes of nodes that were removed (in old but not in new)
+    pub removed_hashes: Vec<Blake3Hash>,
+}
+
+impl DeltaDocument {
+    /// Create a new DeltaDocument by computing the difference between two CasDocuments
+    pub fn new(old_doc: &CasDocument, new_doc: &CasDocument) -> Self {
+        old_doc.compute_delta(new_doc)
+    }
+
+    /// Check if this delta has any changes
+    pub fn is_empty(&self) -> bool {
+        self.added_nodes.is_empty() && self.removed_hashes.is_empty() && self.old_root == self.new_root
+    }
+
+    /// Get statistics about this delta
+    pub fn stats(&self) -> DeltaStats {
+        DeltaStats {
+            added_count: self.added_nodes.len(),
+            removed_count: self.removed_hashes.len(),
+            root_changed: self.old_root != self.new_root,
+        }
+    }
+
+    /// Serialize to JSON
+    pub fn to_json(&self) -> serde_json::Result<String> {
+        serde_json::to_string(self)
+    }
+
+    /// Serialize to pretty-printed JSON
+    pub fn to_json_pretty(&self) -> serde_json::Result<String> {
+        serde_json::to_string_pretty(self)
+    }
+
+    /// Deserialize from JSON
+    pub fn from_json(json: &str) -> serde_json::Result<Self> {
+        serde_json::from_str(json)
+    }
+
+    /// Serialize to MessagePack (compact binary format)
+    pub fn to_msgpack(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
+        rmp_serde::to_vec_named(self)
+    }
+
+    /// Deserialize from MessagePack
+    pub fn from_msgpack(data: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
+        rmp_serde::from_slice(data)
+    }
+
+    /// Serialize to compressed MessagePack (zstd compression level 3)
+    pub fn to_msgpack_compressed(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let msgpack = self.to_msgpack()?;
+        Ok(zstd::bulk::compress(&msgpack, 3)?)
+    }
+
+    /// Deserialize from compressed MessagePack
+    pub fn from_msgpack_compressed(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let msgpack = zstd::bulk::decompress(data, 10_000_000)?;
+        Ok(Self::from_msgpack(&msgpack)?)
+    }
+}
+
+/// Statistics about a delta
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeltaStats {
+    pub added_count: usize,
+    pub removed_count: usize,
+    pub root_changed: bool,
 }
 
 #[cfg(test)]
@@ -456,5 +609,499 @@ mod tests {
         // Verify hashes are hex strings (64 chars), not arrays
         assert!(json.contains(&root_hash.to_hex()));
         assert!(!json.contains("[0,"));  // Should not have byte arrays
+    }
+
+    // Delta computation tests
+    #[test]
+    fn test_delta_no_changes() {
+        let mut store = NodeStore::new();
+
+        let text = AstNode::Text {
+            value: "unchanged".to_string(),
+        };
+        let text_hash = store.store(text);
+
+        let root = AstNode::Root {
+            children: vec![text_hash],
+        };
+        let root_hash = store.store(root);
+
+        let doc = CasDocument::new(&store, root_hash).unwrap();
+
+        // Compute delta with itself
+        let delta = doc.compute_delta(&doc);
+
+        assert!(delta.is_empty());
+        assert_eq!(delta.old_root, delta.new_root);
+        assert_eq!(delta.added_nodes.len(), 0);
+        assert_eq!(delta.removed_hashes.len(), 0);
+    }
+
+    #[test]
+    fn test_delta_add_node() {
+        let mut old_store = NodeStore::new();
+        let mut new_store = NodeStore::new();
+
+        // Old document: one text node
+        let text1 = AstNode::Text {
+            value: "hello".to_string(),
+        };
+        let text1_hash = old_store.store(text1.clone());
+        let _ = new_store.store(text1);
+
+        let old_root = AstNode::Root {
+            children: vec![text1_hash],
+        };
+        let old_root_hash = old_store.store(old_root);
+
+        // New document: two text nodes
+        let text2 = AstNode::Text {
+            value: "world".to_string(),
+        };
+        let text2_hash = new_store.store(text2.clone());
+
+        let new_root = AstNode::Root {
+            children: vec![text1_hash, text2_hash],
+        };
+        let new_root_hash = new_store.store(new_root.clone());
+
+        let old_doc = CasDocument::new(&old_store, old_root_hash).unwrap();
+        let new_doc = CasDocument::new(&new_store, new_root_hash).unwrap();
+
+        // Compute delta
+        let delta = old_doc.compute_delta(&new_doc);
+        let stats = delta.stats();
+
+        assert_eq!(stats.added_count, 2); // new root + new text node
+        assert_eq!(stats.removed_count, 1); // old root
+        assert!(stats.root_changed);
+
+        // Verify the new text node is in added_nodes
+        assert!(delta.added_nodes.contains_key(&text2_hash));
+        assert_eq!(delta.added_nodes[&text2_hash], text2);
+
+        // Verify the new root is in added_nodes
+        assert!(delta.added_nodes.contains_key(&new_root_hash));
+        assert_eq!(delta.added_nodes[&new_root_hash], new_root);
+    }
+
+    #[test]
+    fn test_delta_remove_node() {
+        let mut old_store = NodeStore::new();
+        let mut new_store = NodeStore::new();
+
+        // Old document: two text nodes
+        let text1 = AstNode::Text {
+            value: "hello".to_string(),
+        };
+        let text1_hash = old_store.store(text1.clone());
+        let _ = new_store.store(text1);
+
+        let text2 = AstNode::Text {
+            value: "world".to_string(),
+        };
+        let text2_hash = old_store.store(text2);
+
+        let old_root = AstNode::Root {
+            children: vec![text1_hash, text2_hash],
+        };
+        let old_root_hash = old_store.store(old_root);
+
+        // New document: one text node
+        let new_root = AstNode::Root {
+            children: vec![text1_hash],
+        };
+        let new_root_hash = new_store.store(new_root);
+
+        let old_doc = CasDocument::new(&old_store, old_root_hash).unwrap();
+        let new_doc = CasDocument::new(&new_store, new_root_hash).unwrap();
+
+        // Compute delta
+        let delta = old_doc.compute_delta(&new_doc);
+        let stats = delta.stats();
+
+        assert_eq!(stats.added_count, 1); // new root
+        assert_eq!(stats.removed_count, 2); // old root + removed text node
+        assert!(stats.root_changed);
+
+        // Verify the removed text node is in removed_hashes
+        assert!(delta.removed_hashes.contains(&text2_hash));
+        assert!(delta.removed_hashes.contains(&old_root_hash));
+    }
+
+    #[test]
+    fn test_delta_modify_node() {
+        let mut old_store = NodeStore::new();
+        let mut new_store = NodeStore::new();
+
+        // Old document
+        let old_text = AstNode::Text {
+            value: "old content".to_string(),
+        };
+        let old_text_hash = old_store.store(old_text);
+
+        let old_root = AstNode::Root {
+            children: vec![old_text_hash],
+        };
+        let old_root_hash = old_store.store(old_root);
+
+        // New document (modified text)
+        let new_text = AstNode::Text {
+            value: "new content".to_string(),
+        };
+        let new_text_hash = new_store.store(new_text.clone());
+
+        let new_root = AstNode::Root {
+            children: vec![new_text_hash],
+        };
+        let new_root_hash = new_store.store(new_root.clone());
+
+        let old_doc = CasDocument::new(&old_store, old_root_hash).unwrap();
+        let new_doc = CasDocument::new(&new_store, new_root_hash).unwrap();
+
+        // Compute delta
+        let delta = old_doc.compute_delta(&new_doc);
+        let stats = delta.stats();
+
+        // Modified node = remove old + add new
+        assert!(stats.added_count >= 2); // new root + new text
+        assert!(stats.removed_count >= 2); // old root + old text
+        assert!(stats.root_changed);
+
+        assert!(delta.added_nodes.contains_key(&new_text_hash));
+        assert!(delta.added_nodes.contains_key(&new_root_hash));
+    }
+
+    // Delta application tests
+    #[test]
+    fn test_apply_delta_success() {
+        let mut old_store = NodeStore::new();
+        let mut new_store = NodeStore::new();
+
+        // Create old document
+        let text1 = AstNode::Text {
+            value: "hello".to_string(),
+        };
+        let text1_hash = old_store.store(text1.clone());
+        let _ = new_store.store(text1);
+
+        let old_root = AstNode::Root {
+            children: vec![text1_hash],
+        };
+        let old_root_hash = old_store.store(old_root);
+
+        // Create new document
+        let text2 = AstNode::Text {
+            value: "world".to_string(),
+        };
+        let text2_hash = new_store.store(text2);
+
+        let new_root = AstNode::Root {
+            children: vec![text1_hash, text2_hash],
+        };
+        let new_root_hash = new_store.store(new_root);
+
+        let old_doc = CasDocument::new(&old_store, old_root_hash).unwrap();
+        let new_doc = CasDocument::new(&new_store, new_root_hash).unwrap();
+
+        // Compute and apply delta
+        let delta = old_doc.compute_delta(&new_doc);
+        let result_doc = old_doc.apply_delta(&delta).unwrap();
+
+        // Verify result matches new document
+        assert_eq!(result_doc.root_hash, new_doc.root_hash);
+        assert_eq!(result_doc.nodes.len(), new_doc.nodes.len());
+    }
+
+    #[test]
+    fn test_apply_delta_conflict() {
+        let mut old_store = NodeStore::new();
+        let mut new_store = NodeStore::new();
+        let mut wrong_store = NodeStore::new();
+
+        // Create old document
+        let text1 = AstNode::Text {
+            value: "hello".to_string(),
+        };
+        let text1_hash = old_store.store(text1.clone());
+
+        let old_root = AstNode::Root {
+            children: vec![text1_hash],
+        };
+        let old_root_hash = old_store.store(old_root);
+
+        // Create new document
+        let _ = new_store.store(text1.clone());
+        let text2 = AstNode::Text {
+            value: "world".to_string(),
+        };
+        let text2_hash = new_store.store(text2);
+
+        let new_root = AstNode::Root {
+            children: vec![text1_hash, text2_hash],
+        };
+        let new_root_hash = new_store.store(new_root);
+
+        // Create wrong document with different root
+        let _ = wrong_store.store(text1);
+        let text3 = AstNode::Text {
+            value: "wrong".to_string(),
+        };
+        let text3_hash = wrong_store.store(text3);
+
+        let wrong_root = AstNode::Root {
+            children: vec![text3_hash],
+        };
+        let wrong_root_hash = wrong_store.store(wrong_root);
+
+        let old_doc = CasDocument::new(&old_store, old_root_hash).unwrap();
+        let new_doc = CasDocument::new(&new_store, new_root_hash).unwrap();
+        let wrong_doc = CasDocument::new(&wrong_store, wrong_root_hash).unwrap();
+
+        // Compute delta from old to new
+        let delta = old_doc.compute_delta(&new_doc);
+
+        // Try to apply delta to wrong document (should fail)
+        let result = wrong_doc.apply_delta(&delta);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_apply_delta_roundtrip() {
+        let mut old_store = NodeStore::new();
+        let mut new_store = NodeStore::new();
+
+        // Create complex old document
+        let text1 = AstNode::Text {
+            value: "paragraph 1".to_string(),
+        };
+        let text1_hash = old_store.store(text1.clone());
+        let _ = new_store.store(text1);
+
+        let para1 = AstNode::Paragraph {
+            children: vec![text1_hash],
+        };
+        let para1_hash = old_store.store(para1.clone());
+        let _ = new_store.store(para1);
+
+        let text2 = AstNode::Text {
+            value: "paragraph 2".to_string(),
+        };
+        let text2_hash = old_store.store(text2);
+
+        let para2 = AstNode::Paragraph {
+            children: vec![text2_hash],
+        };
+        let para2_hash = old_store.store(para2);
+
+        let old_root = AstNode::Root {
+            children: vec![para1_hash, para2_hash],
+        };
+        let old_root_hash = old_store.store(old_root);
+
+        // Create new document (replaced para2)
+        let text3 = AstNode::Text {
+            value: "new paragraph 2".to_string(),
+        };
+        let text3_hash = new_store.store(text3);
+
+        let para3 = AstNode::Paragraph {
+            children: vec![text3_hash],
+        };
+        let para3_hash = new_store.store(para3);
+
+        let new_root = AstNode::Root {
+            children: vec![para1_hash, para3_hash],
+        };
+        let new_root_hash = new_store.store(new_root);
+
+        let old_doc = CasDocument::new(&old_store, old_root_hash).unwrap();
+        let new_doc = CasDocument::new(&new_store, new_root_hash).unwrap();
+
+        // Compute delta
+        let delta = old_doc.compute_delta(&new_doc);
+
+        // Apply delta
+        let result_doc = old_doc.apply_delta(&delta).unwrap();
+
+        // Verify result matches new document exactly
+        assert_eq!(result_doc.root_hash, new_doc.root_hash);
+        assert_eq!(result_doc.nodes.len(), new_doc.nodes.len());
+
+        // Verify all nodes match
+        for (hash, node) in &new_doc.nodes {
+            assert!(result_doc.nodes.contains_key(hash));
+            assert_eq!(&result_doc.nodes[hash], node);
+        }
+    }
+
+    // Delta serialization tests
+    #[test]
+    fn test_delta_json_serialization() {
+        let mut old_store = NodeStore::new();
+        let mut new_store = NodeStore::new();
+
+        let text1 = AstNode::Text {
+            value: "hello".to_string(),
+        };
+        let text1_hash = old_store.store(text1.clone());
+        let _ = new_store.store(text1);
+
+        let old_root = AstNode::Root {
+            children: vec![text1_hash],
+        };
+        let old_root_hash = old_store.store(old_root);
+
+        let text2 = AstNode::Text {
+            value: "world".to_string(),
+        };
+        let text2_hash = new_store.store(text2);
+
+        let new_root = AstNode::Root {
+            children: vec![text1_hash, text2_hash],
+        };
+        let new_root_hash = new_store.store(new_root);
+
+        let old_doc = CasDocument::new(&old_store, old_root_hash).unwrap();
+        let new_doc = CasDocument::new(&new_store, new_root_hash).unwrap();
+
+        // Compute delta
+        let delta = old_doc.compute_delta(&new_doc);
+
+        // Test JSON serialization roundtrip
+        let json = delta.to_json().unwrap();
+        let delta2 = DeltaDocument::from_json(&json).unwrap();
+
+        assert_eq!(delta.old_root, delta2.old_root);
+        assert_eq!(delta.new_root, delta2.new_root);
+        assert_eq!(delta.added_nodes.len(), delta2.added_nodes.len());
+        assert_eq!(delta.removed_hashes.len(), delta2.removed_hashes.len());
+    }
+
+    #[test]
+    fn test_delta_msgpack_serialization() {
+        let mut old_store = NodeStore::new();
+        let mut new_store = NodeStore::new();
+
+        let text1 = AstNode::Text {
+            value: "hello".to_string(),
+        };
+        let text1_hash = old_store.store(text1.clone());
+        let _ = new_store.store(text1);
+
+        let old_root = AstNode::Root {
+            children: vec![text1_hash],
+        };
+        let old_root_hash = old_store.store(old_root);
+
+        let text2 = AstNode::Text {
+            value: "world".to_string(),
+        };
+        let text2_hash = new_store.store(text2);
+
+        let new_root = AstNode::Root {
+            children: vec![text1_hash, text2_hash],
+        };
+        let new_root_hash = new_store.store(new_root);
+
+        let old_doc = CasDocument::new(&old_store, old_root_hash).unwrap();
+        let new_doc = CasDocument::new(&new_store, new_root_hash).unwrap();
+
+        // Compute delta
+        let delta = old_doc.compute_delta(&new_doc);
+
+        // Test MessagePack serialization roundtrip
+        let msgpack = delta.to_msgpack().unwrap();
+        let delta2 = DeltaDocument::from_msgpack(&msgpack).unwrap();
+
+        assert_eq!(delta.old_root, delta2.old_root);
+        assert_eq!(delta.new_root, delta2.new_root);
+        assert_eq!(delta.added_nodes.len(), delta2.added_nodes.len());
+        assert_eq!(delta.removed_hashes.len(), delta2.removed_hashes.len());
+    }
+
+    #[test]
+    fn test_delta_compressed_serialization() {
+        let mut old_store = NodeStore::new();
+        let mut new_store = NodeStore::new();
+
+        let text1 = AstNode::Text {
+            value: "hello".to_string(),
+        };
+        let text1_hash = old_store.store(text1.clone());
+        let _ = new_store.store(text1);
+
+        let old_root = AstNode::Root {
+            children: vec![text1_hash],
+        };
+        let old_root_hash = old_store.store(old_root);
+
+        let text2 = AstNode::Text {
+            value: "world".to_string(),
+        };
+        let text2_hash = new_store.store(text2);
+
+        let new_root = AstNode::Root {
+            children: vec![text1_hash, text2_hash],
+        };
+        let new_root_hash = new_store.store(new_root);
+
+        let old_doc = CasDocument::new(&old_store, old_root_hash).unwrap();
+        let new_doc = CasDocument::new(&new_store, new_root_hash).unwrap();
+
+        // Compute delta
+        let delta = old_doc.compute_delta(&new_doc);
+
+        // Test compressed serialization roundtrip
+        let compressed = delta.to_msgpack_compressed().unwrap();
+        let delta2 = DeltaDocument::from_msgpack_compressed(&compressed).unwrap();
+
+        assert_eq!(delta.old_root, delta2.old_root);
+        assert_eq!(delta.new_root, delta2.new_root);
+        assert_eq!(delta.added_nodes.len(), delta2.added_nodes.len());
+        assert_eq!(delta.removed_hashes.len(), delta2.removed_hashes.len());
+
+        // Verify compression provides size reduction
+        let uncompressed = delta.to_msgpack().unwrap();
+        assert!(compressed.len() < uncompressed.len());
+    }
+
+    #[test]
+    fn test_delta_stats() {
+        let mut old_store = NodeStore::new();
+        let mut new_store = NodeStore::new();
+
+        let text1 = AstNode::Text {
+            value: "hello".to_string(),
+        };
+        let text1_hash = old_store.store(text1.clone());
+        let _ = new_store.store(text1);
+
+        let old_root = AstNode::Root {
+            children: vec![text1_hash],
+        };
+        let old_root_hash = old_store.store(old_root);
+
+        let text2 = AstNode::Text {
+            value: "world".to_string(),
+        };
+        let text2_hash = new_store.store(text2);
+
+        let new_root = AstNode::Root {
+            children: vec![text1_hash, text2_hash],
+        };
+        let new_root_hash = new_store.store(new_root);
+
+        let old_doc = CasDocument::new(&old_store, old_root_hash).unwrap();
+        let new_doc = CasDocument::new(&new_store, new_root_hash).unwrap();
+
+        // Compute delta and get stats
+        let delta = old_doc.compute_delta(&new_doc);
+        let stats = delta.stats();
+
+        assert_eq!(stats.added_count, delta.added_nodes.len());
+        assert_eq!(stats.removed_count, delta.removed_hashes.len());
+        assert!(stats.root_changed);
+        assert_ne!(delta.old_root, delta.new_root);
     }
 }

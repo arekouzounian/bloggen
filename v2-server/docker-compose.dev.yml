@@ -1,0 +1,31 @@
+# Development database for sqlx compile-time checking
+# Usage:
+#   docker-compose -f docker-compose.dev.yml up -d
+#   export DATABASE_URL="postgres://postgres:postgres@localhost:5432/bloggen"
+#   cargo sqlx migrate run
+#   cargo sqlx prepare
+#   docker-compose -f docker-compose.dev.yml down
+
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bloggen-dev-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bloggen
+    ports:
+      - "5432:5432"
+    volumes:
+      # Persist data for development (optional - remove for truly disposable)
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
