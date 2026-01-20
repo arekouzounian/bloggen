@@ -96,7 +96,7 @@ mod tests {
         assert_eq!(config.database.max_connections, 10);
         assert_eq!(config.database.min_connections, 2);
         assert_eq!(config.logging.level, "info");
-        assert_eq!(config.logging.json, false);
+        assert!(!config.logging.json);
     }
 
     #[test]
@@ -124,7 +124,7 @@ mod tests {
         assert_eq!(config.database.max_connections, 20);
         assert_eq!(config.database.min_connections, 5);
         assert_eq!(config.logging.level, "debug");
-        assert_eq!(config.logging.json, true);
+        assert!(config.logging.json);
     }
 
     #[test]

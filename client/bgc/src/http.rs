@@ -243,7 +243,7 @@ pub struct ListPostsResponse {
     pub total: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PostSummary {
     pub slug: String,
     pub title: Option<String>,

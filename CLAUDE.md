@@ -42,11 +42,23 @@ The v2 client uses a content-addressable storage (CAS) system:
    - Custom `Serialize` implementations for hex-encoded hashes
    - Position metadata excluded to reduce payload size
    - Multiple output formats: JSON, MessagePack, zstd-compressed
-4. **Rendering** (`render.rs`): Experimental AST→Markdown round-trip (work in progress)
+4. **Rendering** (`render.rs`): AST→Markdown round-trip for displaying posts
+5. **FUSE Filesystem** (`fuse.rs`):
+   - Mount posts as virtual `.md` files in a directory
+   - Read: Fetch from server, render to markdown, cache locally
+   - Write: Parse markdown, mark dirty, upload on flush
+   - In-memory cache with dirty tracking
+   - Integrates with HTTP client for server communication
 
 **Key data flow:**
 ```
 Markdown → markdown-rs → AstNode → NodeStore → CasDocument → JSON/MessagePack/zstd
+```
+
+**FUSE workflow:**
+```
+User reads file → Cache check → Server fetch (if miss) → Render to markdown → Display
+User writes file → Parse markdown → Mark dirty → Upload on flush → Update cache
 ```
 
 ### Server Architecture (`server/`)
@@ -89,8 +101,18 @@ cargo run -- parse document.md --msgpack --output doc.msgpack
 # Parse to compressed format (best for network transmission)
 cargo run -- parse document.md --msgpack --compress --output doc.msgpack.zst
 
-# Render AST back to markdown (experimental, WIP)
+# Render AST back to markdown
 cargo run -- render document.md
+
+# Mount FUSE filesystem (requires server running)
+mkdir ~/blog-posts
+cargo run -- mount ~/blog-posts --server http://localhost:3000
+
+# Mount with logging
+RUST_LOG=info cargo run -- mount ~/blog-posts --server http://localhost:3000
+
+# Unmount (Ctrl+C or from another terminal)
+fusermount -u ~/blog-posts
 
 # Lint
 cargo clippy

@@ -31,6 +31,7 @@
 pub mod ast;
 pub mod cas;
 pub mod convert;
+pub mod fuse;
 pub mod http;
 pub mod render;
 

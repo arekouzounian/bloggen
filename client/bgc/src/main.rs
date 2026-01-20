@@ -1,6 +1,59 @@
-use bgc::{parse_markdown_file, Blake3Hash, CasDocument, Client, MarkdownRenderer};
+use bgc::{fuse::BlogGenFS, parse_markdown_file, Blake3Hash, CasDocument, Client, MarkdownRenderer};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::fs;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+struct MountMetadata {
+    pid: u32,
+    mount_point: PathBuf,
+    server: String,
+}
+
+fn get_mount_metadata_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "Could not determine home directory")?;
+    let meta_dir = PathBuf::from(home).join(".bgc").join("mounts");
+    fs::create_dir_all(&meta_dir)?;
+    Ok(meta_dir)
+}
+
+fn get_mount_metadata_path(mount_point: &PathBuf) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let canonical = fs::canonicalize(mount_point)
+        .unwrap_or_else(|_| mount_point.clone());
+    let hash = blake3::hash(canonical.to_string_lossy().as_bytes());
+    let filename = format!("{}.yaml", hex::encode(&hash.as_bytes()[..8]));
+    Ok(get_mount_metadata_dir()?.join(filename))
+}
+
+fn save_mount_metadata(mount_point: &PathBuf, server: &str, pid: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let metadata = MountMetadata {
+        pid,
+        mount_point: mount_point.clone(),
+        server: server.to_string(),
+    };
+    let path = get_mount_metadata_path(mount_point)?;
+    let yaml = serde_yaml::to_string(&metadata)?;
+    fs::write(&path, yaml)?;
+    Ok(())
+}
+
+fn load_mount_metadata(mount_point: &PathBuf) -> Result<MountMetadata, Box<dyn std::error::Error>> {
+    let path = get_mount_metadata_path(mount_point)?;
+    let yaml = fs::read_to_string(&path)?;
+    let metadata: MountMetadata = serde_yaml::from_str(&yaml)?;
+    Ok(metadata)
+}
+
+fn remove_mount_metadata(mount_point: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let path = get_mount_metadata_path(mount_point)?;
+    if path.exists() {
+        fs::remove_file(&path)?;
+    }
+    Ok(())
+}
 
 #[derive(Parser)]
 #[command(name = "bgc")]
@@ -150,10 +203,33 @@ enum Commands {
         #[arg(long)]
         stats: bool,
     },
+
+    /// Mount a FUSE filesystem for browsing and editing posts as files
+    Mount {
+        /// Directory to mount the filesystem at
+        mount_point: PathBuf,
+
+        /// Server URL (e.g., http://localhost:3000)
+        #[arg(long, default_value = "http://localhost:3000")]
+        server: String,
+
+        /// Internal flag: run in daemon mode (used internally, not for users)
+        #[arg(long, hide = true)]
+        daemon: bool,
+    },
+
+    /// Unmount a previously mounted FUSE filesystem
+    Unmount {
+        /// Directory to unmount
+        mount_point: PathBuf,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize logging (set RUST_LOG=info to see logs)
+    env_logger::init();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -631,6 +707,141 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("✓ Post updated: {}", slug);
             }
+
+            Ok(())
+        }
+
+        Commands::Mount {
+            mount_point,
+            server,
+            daemon,
+        } => {
+            if daemon {
+                // Running in daemon mode - perform actual mount
+                // This is the child process that will block on the FUSE mount
+
+                // Create and mount filesystem
+                let fs = BlogGenFS::new(server);
+                fs.mount(&mount_point)?;
+
+                // When mount returns (after unmount), clean up metadata
+                let _ = remove_mount_metadata(&mount_point);
+
+                Ok(())
+            } else {
+                // Main process - spawn daemon and return
+
+                // Verify mount point exists and is a directory
+                if !mount_point.exists() {
+                    eprintln!("Creating mount point: {}", mount_point.display());
+                    std::fs::create_dir_all(&mount_point)?;
+                } else if !mount_point.is_dir() {
+                    eprintln!("Error: Mount point is not a directory: {}", mount_point.display());
+                    std::process::exit(1);
+                }
+
+                // Check if directory is empty
+                if mount_point.read_dir()?.next().is_some() {
+                    eprintln!("Error: Mount point is not empty: {}", mount_point.display());
+                    eprintln!("FUSE filesystems must be mounted on empty directories.");
+                    std::process::exit(1);
+                }
+
+                // Check if already mounted
+                if let Ok(metadata) = load_mount_metadata(&mount_point) {
+                    // Check if process is still running
+                    use nix::sys::signal::{kill, Signal};
+                    use nix::unistd::Pid;
+
+                    if kill(Pid::from_raw(metadata.pid as i32), Signal::SIGCONT).is_ok() {
+                        eprintln!("Error: Mount point is already mounted (PID {})", metadata.pid);
+                        eprintln!("Use 'bgc unmount {}' to unmount first", mount_point.display());
+                        std::process::exit(1);
+                    } else {
+                        // Process is dead, clean up stale metadata
+                        let _ = remove_mount_metadata(&mount_point);
+                    }
+                }
+
+                // Get canonical path for mount point
+                let canonical_mount_point = fs::canonicalize(&mount_point)?;
+
+                // Spawn daemon process
+                let exe = std::env::current_exe()?;
+                let child = std::process::Command::new(exe)
+                    .arg("mount")
+                    .arg(&canonical_mount_point)
+                    .arg("--server")
+                    .arg(&server)
+                    .arg("--daemon")
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()?;
+
+                let pid = child.id();
+
+                // Save metadata
+                save_mount_metadata(&canonical_mount_point, &server, pid)?;
+
+                println!("✓ BlogGen filesystem mounted successfully");
+                println!("  Server: {}", server);
+                println!("  Mount point: {}", canonical_mount_point.display());
+                println!("  PID: {}", pid);
+                println!();
+                println!("To view logs, set RUST_LOG=info or RUST_LOG=debug and check system logs");
+                println!("To unmount: bgc unmount {}", canonical_mount_point.display());
+
+                Ok(())
+            }
+        }
+
+        Commands::Unmount { mount_point } => {
+            // Get canonical path
+            let canonical_mount_point = fs::canonicalize(&mount_point)
+                .unwrap_or_else(|_| mount_point.clone());
+
+            // Load metadata
+            let metadata = load_mount_metadata(&canonical_mount_point)
+                .map_err(|_| {
+                    format!("Mount point {} is not mounted by bgc", canonical_mount_point.display())
+                })?;
+
+            println!("Unmounting BlogGen filesystem...");
+            println!("  Mount point: {}", canonical_mount_point.display());
+            println!("  PID: {}", metadata.pid);
+
+            // Call fusermount -u to unmount
+            let output = std::process::Command::new("fusermount")
+                .arg("-u")
+                .arg(&canonical_mount_point)
+                .output()?;
+
+            if !output.status.success() {
+                eprintln!("Error: fusermount failed");
+                eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+                std::process::exit(1);
+            }
+
+            println!("✓ Unmounted successfully");
+
+            // Wait for process to exit (with timeout)
+            use nix::sys::signal::{kill, Signal};
+            use nix::unistd::Pid;
+
+            let pid = Pid::from_raw(metadata.pid as i32);
+            let mut waited = 0;
+            while waited < 50 {  // Wait up to 5 seconds
+                if kill(pid, Signal::SIGCONT).is_err() {
+                    // Process has exited
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                waited += 1;
+            }
+
+            // Clean up metadata
+            remove_mount_metadata(&canonical_mount_point)?;
 
             Ok(())
         }

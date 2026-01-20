@@ -153,7 +153,7 @@ impl NodeStore {
 ///
 /// This represents a full markdown document as a content-addressed AST,
 /// with all nodes stored in the node store and indexed by the root hash.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CasDocument {
     /// The hash of the root node
     pub root_hash: Blake3Hash,

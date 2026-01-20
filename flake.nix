@@ -53,6 +53,8 @@
           rust = pkgs.mkShell {
             buildInputs = commonTools ++ rustPkgs ++ [
               pkgs.openssl
+              pkgs.fuse3
+              pkgs.pkg-config
             ];
 
             # more env vars here

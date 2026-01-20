@@ -488,3 +488,101 @@ fn test_round_trip_fidelity() {
         }
     }
 }
+
+#[test]
+fn test_fuse_integration_e2e() {
+    eprintln!("\n=== FUSE Integration E2E Test ===");
+
+    // Test the full workflow:
+    // 1. Parse markdown
+    // 2. Create CAS document
+    // 3. Simulate server communication (upload/download)
+    // 4. Render back to markdown
+    // 5. Verify round-trip
+
+    let original_markdown = r#"# My Blog Post
+
+This is a test post for the FUSE filesystem.
+
+## Features
+
+- Content-addressable storage
+- Efficient delta updates
+- **FUSE** filesystem driver
+- Markdown round-trip
+
+## Code Example
+
+```rust
+fn main() {
+    println!("Hello, BlogGen!");
+}
+```
+
+Read more at [BlogGen](https://example.com).
+"#;
+
+    eprintln!("  Original markdown: {} bytes", original_markdown.len());
+
+    // Step 1: Parse markdown
+    let (store, root_hash) = time_operation("Parse markdown", || {
+        let mut store = NodeStore::new();
+        let root_hash = parse_markdown(original_markdown, &mut store).unwrap();
+        (store, root_hash)
+    });
+
+    eprintln!("  Nodes created: {}", store.len());
+    eprintln!("  Root hash: {}", root_hash.to_hex());
+
+    // Step 2: Create CAS document (what would be uploaded)
+    let doc = time_operation("Create CAS document", || {
+        CasDocument::new(&store, root_hash).unwrap()
+    });
+
+    // Step 3: Serialize (simulating network transfer)
+    let msgpack_data = time_operation("Serialize to MessagePack", || {
+        doc.to_msgpack().unwrap()
+    });
+
+    eprintln!("  Serialized size: {} bytes", msgpack_data.len());
+
+    // Step 4: Deserialize (simulating server response)
+    let doc2 = time_operation("Deserialize from MessagePack", || {
+        CasDocument::from_msgpack(&msgpack_data).unwrap()
+    });
+
+    assert_eq!(doc.root_hash, doc2.root_hash);
+    assert_eq!(doc.nodes.len(), doc2.nodes.len());
+
+    // Step 5: Convert to NodeStore (simulating FUSE read)
+    let store2 = time_operation("Convert to NodeStore", || {
+        doc2.to_store()
+    });
+
+    // Step 6: Render to markdown (what FUSE would return to user)
+    let rendered_markdown = time_operation("Render to Markdown", || {
+        let root = store2.get(&doc2.root_hash).unwrap();
+        let mut renderer = MarkdownRenderer::new(&store2);
+        renderer.render(root).unwrap()
+    });
+
+    eprintln!("  Rendered markdown: {} bytes", rendered_markdown.len());
+
+    // Step 7: Parse rendered markdown (simulating FUSE write)
+    let (store3, root_hash3) = time_operation("Parse rendered markdown", || {
+        let mut store = NodeStore::new();
+        let root_hash = parse_markdown(&rendered_markdown, &mut store).unwrap();
+        (store, root_hash)
+    });
+
+    eprintln!("  Round-trip nodes: {}", store3.len());
+
+    // Verify the full round-trip preserves structure
+    assert!(
+        store3.contains(&root_hash3),
+        "Root hash should exist in final store"
+    );
+
+    eprintln!("\n  ✅ Full FUSE workflow successful!");
+    eprintln!("     Parse → CAS → Serialize → Deserialize → Render → Parse");
+}

@@ -29,16 +29,27 @@ TESTS_RUN=0
 TESTS_PASSED=0
 TESTS_FAILED=0
 
+# Detect repository root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Check we're in the right place
+if [ ! -d "$REPO_ROOT/client/bgc" ]; then
+    echo -e "${RED}Error: Could not find client/bgc directory${NC}"
+    echo "Expected to find: $REPO_ROOT/client/bgc"
+    exit 1
+fi
+
 # Temp directory for test files
 TEST_DIR=$(mktemp -d)
 trap "rm -rf $TEST_DIR" EXIT
 
 # Get the bgc binary path
-BGC_BIN="./target/debug/bgc"
+BGC_BIN="$REPO_ROOT/client/bgc/target/debug/bgc"
 
 if [ ! -f "$BGC_BIN" ]; then
     echo -e "${YELLOW}Building bgc...${NC}"
-    cargo build
+    (cd "$REPO_ROOT/client/bgc" && cargo build)
 fi
 
 # Helper functions

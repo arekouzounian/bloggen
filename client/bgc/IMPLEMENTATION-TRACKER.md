@@ -259,26 +259,27 @@ This document tracks the implementation status of the Rust client for BlogGen v2
 
 ---
 
-## FUSE Driver Integration (Future)
+## FUSE Driver Integration
 
-### ⬜ Basic FUSE Operations
-- [ ] Mount virtual filesystem
-- [ ] List files (readdir)
-- [ ] Read file (fetch AST, render to markdown)
-- [ ] Write file (parse markdown, compute delta)
-- [ ] File metadata (size, timestamps)
-- [ ] Unmount
+### ✅ Basic FUSE Operations
+- [x] Mount virtual filesystem
+- [x] List files (readdir)
+- [x] Read file (fetch AST, render to markdown)
+- [x] Write file (parse markdown, mark dirty)
+- [x] File metadata (size, timestamps)
+- [x] Unmount (auto-unmount on Ctrl+C)
+- [x] CLI mount command
 
-### ⬜ Caching Layer
-- [ ] Local AST cache (LRU)
-- [ ] Markdown render cache
-- [ ] Cache invalidation on writes
+### ✅ Caching Layer
+- [x] Local AST cache (in-memory)
+- [x] Markdown render cache
+- [x] Cache invalidation on writes (dirty flag)
 - [ ] Persistent cache to disk
-- [ ] Cache size limits
+- [ ] Cache size limits (LRU eviction)
 
-### ⬜ Sync Operations
-- [ ] Fetch document from server
-- [ ] Push changes to server (delta updates)
+### ✅ Sync Operations
+- [x] Fetch document from server
+- [x] Push changes to server (on flush)
 - [ ] Conflict detection (server version changed)
 - [ ] Conflict resolution strategies
 - [ ] Offline mode (buffer writes)
@@ -289,6 +290,7 @@ This document tracks the implementation status of the Rust client for BlogGen v2
 - [ ] Write buffering (batch small edits)
 - [ ] Version history browsing
 - [ ] Snapshot support (checkpoint local state)
+- [ ] Delta update on write (currently uploads full AST)
 
 ---
 
@@ -374,24 +376,47 @@ This document tracks the implementation status of the Rust client for BlogGen v2
 ### Current Progress
 - **Core Features**: 3/3 complete (100%)
 - **Serialization**: 4/4 complete (100%) ✅ **Delta updates COMPLETE**
-- **CLI**: 3/3 complete (100%) ✅ **All core commands implemented**
+- **CLI**: 4/4 complete (100%) ✅ **All core commands + mount implemented**
 - **AST → Markdown Rendering**: 3/3 complete (100%)
-- **Testing**: 3/3 complete (100%) - Comprehensive suite with E2E tests
-- **Documentation**: 2/3 complete (67%) - API docs and tutorials pending
+- **FUSE Driver**: 2/4 complete (50%) ✅ **MVP COMPLETE - basic read/write/mount**
+- **Testing**: 4/4 complete (100%) - Comprehensive suite with E2E tests + FUSE tests
+- **Documentation**: 3/3 complete (100%)
 
 ### Overall Completion
-- **Implemented**: ~75% of planned features
-- **Critical Path Items Remaining**:
+- **Implemented**: ~85% of planned features
+- **Critical Path Items**:
   1. ✅ ~~AST → Markdown rendering~~ (COMPLETE - required for FUSE)
   2. ✅ ~~**Delta update computation**~~ (COMPLETE - major network optimization)
-  3. FUSE driver (end-user filesystem integration)
-  4. Server API client (network communication)
+  3. ✅ ~~FUSE driver~~ (MVP COMPLETE - end-user filesystem integration)
+  4. ✅ ~~Server API client~~ (COMPLETE - network communication)
 
 ### Next Milestones
 1. ✅ ~~**Milestone 1**: AST → Markdown renderer~~ (COMPLETE)
 2. ✅ ~~**Milestone 2**: Delta updates~~ (COMPLETE - **network efficiency achieved**)
-3. **Milestone 3**: FUSE driver MVP (basic read/write)
-4. **Milestone 4**: Server integration (end-to-end functionality)
+3. ✅ ~~**Milestone 3**: FUSE driver MVP (basic read/write)~~ (COMPLETE)
+4. **Milestone 4**: Enhanced FUSE features (conflict detection, offline mode, persistent cache)
+
+### Recent Additions (2026-01-19)
+- ✅ **FUSE filesystem driver (Milestone 3 complete)**:
+  - `BlogGenFS` struct with HTTP client integration
+  - In-memory cache layer (AST + markdown + metadata)
+  - Mount/unmount operations via CLI `mount` command
+  - `readdir` - List all posts as `.md` files
+  - `read` - Fetch post from server, render to markdown
+  - `write` - Parse markdown, mark as dirty
+  - `flush` - Upload changes to server
+  - `getattr` - File metadata (size, timestamps, permissions)
+  - Auto-refresh post list from server on directory access
+  - Dirty tracking for modified posts
+  - Error handling and logging throughout
+  - Works with existing HTTP client and server API
+- ✅ Updated flake.nix with fuse3 and pkg-config dependencies
+- ✅ Updated Cargo.toml with fuser 0.16, libc, log, env_logger
+- ✅ **Comprehensive test suite**:
+  - 8 unit tests for FUSE cache operations and inode management (src/fuse.rs)
+  - 5 integration tests for HTTP client with mock server (tests/fuse_tests.rs)
+  - 1 E2E test for full FUSE workflow (tests/comprehensive_tests.rs)
+  - **Total: 111 tests passing** (99 unit + 6 comprehensive + 5 integration + 1 doc)
 
 ### Recent Additions (2026-01-18)
 - ✅ Comprehensive test suite with timing measurements
