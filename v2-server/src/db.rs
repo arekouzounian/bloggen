@@ -77,33 +77,81 @@ impl Database {
     }
 
     /// Walk the tree from a root hash and collect all nodes
+    ///
+    /// Uses batched fetching to avoid the N+1 query problem.
+    /// Fetches nodes in waves: fetch current level, extract child hashes,
+    /// batch-fetch all children, repeat. For a 1000-node tree with depth 10,
+    /// this reduces from 1000 queries to ~10 queries.
     pub async fn walk_tree(&self, root_hash: &Blake3Hash) -> Result<HashMap<Blake3Hash, AstNode>> {
         let mut nodes = HashMap::new();
         let mut visited = HashSet::new();
-        let mut to_visit = vec![*root_hash];
+        let mut current_level = vec![*root_hash];
 
-        while let Some(hash) = to_visit.pop() {
-            if visited.contains(&hash) {
-                continue;
-            }
-            visited.insert(hash);
+        while !current_level.is_empty() {
+            // Batch fetch all nodes at current level
+            let fetched = self.get_nodes_batch(&current_level).await?;
 
-            let node = self
-                .get_node(&hash)
-                .await?
-                .ok_or_else(|| anyhow!("Node not found: {}", hash.to_hex()))?;
+            let mut next_level = Vec::new();
 
-            // Add children to visit queue
-            for child_hash in node.children() {
-                if !visited.contains(child_hash) {
-                    to_visit.push(*child_hash);
+            for (hash, node) in fetched {
+                if visited.contains(&hash) {
+                    continue;
                 }
+                visited.insert(hash);
+
+                // Collect children for next level
+                for child_hash in node.children() {
+                    if !visited.contains(child_hash) {
+                        next_level.push(*child_hash);
+                    }
+                }
+
+                nodes.insert(hash, node);
             }
 
-            nodes.insert(hash, node);
+            current_level = next_level;
+        }
+
+        if nodes.is_empty() {
+            return Err(anyhow!("Root node not found: {}", root_hash.to_hex()));
         }
 
         Ok(nodes)
+    }
+
+    /// Batch fetch multiple nodes by their hashes
+    async fn get_nodes_batch(&self, hashes: &[Blake3Hash]) -> Result<Vec<(Blake3Hash, AstNode)>> {
+        if hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Convert hashes to byte arrays for query
+        let hash_bytes: Vec<Vec<u8>> = hashes
+            .iter()
+            .map(|h| h.as_bytes().to_vec())
+            .collect();
+
+        let rows: Vec<PgRow> = sqlx::query(
+            "SELECT hash, node_data FROM ast_nodes WHERE hash = ANY($1)"
+        )
+        .bind(&hash_bytes)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut result = Vec::new();
+        for row in rows {
+            let hash_bytes: Vec<u8> = row.get("hash");
+            let mut hash_array = [0u8; 32];
+            hash_array.copy_from_slice(&hash_bytes);
+            let hash = Blake3Hash::new(hash_array);
+
+            let node_json: serde_json::Value = row.get("node_data");
+            let node: AstNode = serde_json::from_value(node_json)?;
+
+            result.push((hash, node));
+        }
+
+        Ok(result)
     }
 
     /// Increment reference count for a node
@@ -131,38 +179,114 @@ impl Database {
     }
 
     /// Increment ref counts for all nodes in a tree
+    ///
+    /// Uses a single batched UPDATE to modify all nodes at once.
+    /// For a 1000-node tree, this reduces from 1000 UPDATEs to 1 UPDATE.
     pub async fn increment_tree_refs(&self, root_hash: &Blake3Hash) -> Result<()> {
         let nodes = self.walk_tree(root_hash).await?;
 
-        let mut tx = self.pool.begin().await?;
-
-        for hash in nodes.keys() {
-            let hash_bytes = hash.as_bytes();
-            sqlx::query("UPDATE ast_nodes SET ref_count = ref_count + 1 WHERE hash = $1")
-                .bind(hash_bytes.as_slice())
-                .execute(&mut *tx)
-                .await?;
+        if nodes.is_empty() {
+            return Ok(());
         }
 
-        tx.commit().await?;
+        // Batch update all ref counts in one query
+        let hash_bytes: Vec<Vec<u8>> = nodes
+            .keys()
+            .map(|h| h.as_bytes().to_vec())
+            .collect();
+
+        sqlx::query("UPDATE ast_nodes SET ref_count = ref_count + 1 WHERE hash = ANY($1)")
+            .bind(&hash_bytes)
+            .execute(&self.pool)
+            .await?;
+
         Ok(())
     }
 
     /// Decrement ref counts for all nodes in a tree
+    ///
+    /// Uses a single batched UPDATE to modify all nodes at once.
+    /// For a 1000-node tree, this reduces from 1000 UPDATEs to 1 UPDATE.
     pub async fn decrement_tree_refs(&self, root_hash: &Blake3Hash) -> Result<()> {
         let nodes = self.walk_tree(root_hash).await?;
 
-        let mut tx = self.pool.begin().await?;
+        if nodes.is_empty() {
+            return Ok(());
+        }
 
-        for hash in nodes.keys() {
-            let hash_bytes = hash.as_bytes();
-            sqlx::query("UPDATE ast_nodes SET ref_count = ref_count - 1 WHERE hash = $1")
-                .bind(hash_bytes.as_slice())
-                .execute(&mut *tx)
+        // Batch update all ref counts in one query
+        let hash_bytes: Vec<Vec<u8>> = nodes
+            .keys()
+            .map(|h| h.as_bytes().to_vec())
+            .collect();
+
+        sqlx::query("UPDATE ast_nodes SET ref_count = ref_count - 1 WHERE hash = ANY($1)")
+            .bind(&hash_bytes)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Update reference counts when transitioning from old_root to new_root
+    ///
+    /// This is much more efficient than decrement_tree_refs(old) + increment_tree_refs(new)
+    /// because it only updates nodes that actually changed. For a typical edit where
+    /// 95% of nodes are shared, this reduces from 2000 UPDATEs to ~100 UPDATEs.
+    pub async fn update_tree_refs_delta(
+        &self,
+        old_root: &Blake3Hash,
+        new_root: &Blake3Hash,
+    ) -> Result<()> {
+        // If roots are the same, no changes needed
+        if old_root == new_root {
+            return Ok(());
+        }
+
+        // Walk both trees
+        let old_nodes = self.walk_tree(old_root).await?;
+        let new_nodes = self.walk_tree(new_root).await?;
+
+        let old_hashes: HashSet<_> = old_nodes.keys().copied().collect();
+        let new_hashes: HashSet<_> = new_nodes.keys().copied().collect();
+
+        // Compute delta
+        let added: Vec<_> = new_hashes.difference(&old_hashes).copied().collect();
+        let removed: Vec<_> = old_hashes.difference(&new_hashes).copied().collect();
+
+        // Batch increment new nodes
+        if !added.is_empty() {
+            let hash_bytes: Vec<Vec<u8>> = added
+                .iter()
+                .map(|h| h.as_bytes().to_vec())
+                .collect();
+
+            sqlx::query("UPDATE ast_nodes SET ref_count = ref_count + 1 WHERE hash = ANY($1)")
+                .bind(&hash_bytes)
+                .execute(&self.pool)
                 .await?;
         }
 
-        tx.commit().await?;
+        // Batch decrement removed nodes
+        if !removed.is_empty() {
+            let hash_bytes: Vec<Vec<u8>> = removed
+                .iter()
+                .map(|h| h.as_bytes().to_vec())
+                .collect();
+
+            sqlx::query("UPDATE ast_nodes SET ref_count = ref_count - 1 WHERE hash = ANY($1)")
+                .bind(&hash_bytes)
+                .execute(&self.pool)
+                .await?;
+        }
+
+        tracing::debug!(
+            "Delta refcount update: {} added, {} removed, {} shared",
+            added.len(),
+            removed.len(),
+            old_hashes.intersection(&new_hashes).count()
+        );
+
         Ok(())
     }
 

@@ -31,34 +31,70 @@ const FIRST_FILE_INODE: u64 = 2;
 /// Time-to-live for cached attributes (in seconds)
 const ATTR_TTL: Duration = Duration::from_secs(60);
 
+/// Check if a filename is a vim temporary file that should be ignored
+fn is_vim_temp_file(name: &str) -> bool {
+    // Swap files: .filename.swp, .filename.swo, .filename.swn, etc.
+    if name.starts_with('.') && (name.contains(".sw") || name.ends_with(".un~")) {
+        return true;
+    }
+
+    // Backup files: filename~, filename.md~
+    if name.ends_with('~') {
+        return true;
+    }
+
+    // Vim's numbered backup files (just numbers like "4913")
+    if name.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+
+    false
+}
+
 /// Cache entry for a post
 #[derive(Debug, Clone)]
 pub(crate) struct CacheEntry {
     /// Post metadata from server
     summary: PostSummary,
-    /// Cached AST (if fetched)
+    /// Original AST from server (for delta computation)
+    old_ast: Option<CasDocument>,
+    /// Current AST (modified locally or fetched)
     ast: Option<CasDocument>,
     /// Cached markdown rendering
     markdown: Option<String>,
     /// Whether the post has been modified locally
     dirty: bool,
+    /// Whether the post exists on the server (vs being a local-only draft)
+    exists_on_server: bool,
     /// Last access time
     accessed_at: SystemTime,
+    /// Last modification time
+    modified_at: SystemTime,
 }
 
 impl CacheEntry {
     fn new(summary: PostSummary) -> Self {
+        let now = SystemTime::now();
         Self {
             summary,
+            old_ast: None,
             ast: None,
             markdown: None,
             dirty: false,
-            accessed_at: SystemTime::now(),
+            exists_on_server: false,
+            accessed_at: now,
+            modified_at: now,
         }
     }
 
     fn mark_accessed(&mut self) {
         self.accessed_at = SystemTime::now();
+    }
+
+    fn mark_modified(&mut self) {
+        let now = SystemTime::now();
+        self.modified_at = now;
+        self.accessed_at = now;
     }
 
     #[allow(dead_code)]
@@ -200,7 +236,9 @@ impl BlogGenFS {
 
             // Update or insert cache entry
             let summary_clone = summary.clone();
-            cache.entry(slug).or_insert_with(|| CacheEntry::new(summary.clone())).summary = summary_clone;
+            let entry = cache.entry(slug).or_insert_with(|| CacheEntry::new(summary.clone()));
+            entry.summary = summary_clone;
+            entry.exists_on_server = true;
         }
 
         info!("Refreshed {} posts from server", cache.len());
@@ -236,8 +274,11 @@ impl BlogGenFS {
         // Update cache
         let mut cache = self.cache.write().unwrap();
         if let Some(entry) = cache.get_mut(slug) {
+            // Store as both old and current AST since we just fetched from server
+            entry.old_ast = Some(cas_doc.clone());
             entry.ast = Some(cas_doc);
             entry.markdown = Some(markdown.clone());
+            entry.exists_on_server = true;
             entry.mark_accessed();
         }
 
@@ -276,10 +317,17 @@ impl BlogGenFS {
         // Update cache with new content
         let mut cache = self.cache.write().unwrap();
         if let Some(entry) = cache.get_mut(slug) {
+            // If old_ast is None (file was clean), preserve current ast for delta computation
+            // This happens when a flushed file is edited again
+            if entry.old_ast.is_none() && entry.ast.is_some() {
+                debug!("Post '{}' was clean, saving current AST for delta computation", slug);
+                entry.old_ast = entry.ast.clone();
+            }
+
             entry.markdown = Some(markdown);
             entry.ast = Some(new_doc);
             entry.dirty = true;
-            entry.mark_accessed();
+            entry.mark_modified();
         } else {
             // Entry doesn't exist - this shouldn't happen but handle it gracefully
             error!("Cache entry not found for slug '{}' during write", slug);
@@ -293,73 +341,132 @@ impl BlogGenFS {
     fn flush_post(&self, slug: &str) -> Result<()> {
         debug!("Flushing dirty post to server: {}", slug);
 
-        let cache = self.cache.read().unwrap();
-        let entry = cache.get(slug).context(format!("Post '{}' not found in cache during flush", slug))?;
+        // Clone all needed data while holding the lock, then drop it before network I/O
+        let (new_doc, title, exists_on_server, old_doc) = {
+            let cache = self.cache.read().unwrap();
+            let entry = cache.get(slug).context(format!("Post '{}' not found in cache during flush", slug))?;
 
-        if !entry.dirty {
-            debug!("Post '{}' is not dirty, skipping flush", slug);
-            return Ok(());
-        }
-
-        debug!("Post '{}' is dirty, uploading to server...", slug);
-
-        let new_doc = match entry.ast.as_ref() {
-            Some(doc) => doc,
-            None => {
-                // No AST yet - file was created but not written to
-                // This is normal for files created with touch or cat redirection
-                debug!("Post '{}' has no AST yet, skipping flush", slug);
+            if !entry.dirty {
+                debug!("Post '{}' is not dirty, skipping flush", slug);
                 return Ok(());
             }
-        };
 
-        // Check if this is a new post or an update
-        // For now, we'll assume it's an update and use delta
-        // TODO: Handle new post creation properly
+            debug!("Post '{}' is dirty, uploading to server...", slug);
 
-        // If we have the old AST, compute delta
-        // For simplicity, let's just upload the full AST for now
-        // TODO: Implement proper delta update
+            let new_doc = match entry.ast.as_ref() {
+                Some(doc) => doc.clone(),
+                None => {
+                    // No AST yet - file was created but not written to
+                    // This is normal for files created with touch or cat redirection
+                    debug!("Post '{}' has no AST yet, skipping flush", slug);
+                    return Ok(());
+                }
+            };
+
+            let title = entry.summary.title.clone();
+            let exists_on_server = entry.exists_on_server;
+            let old_doc = entry.old_ast.clone();
+
+            (new_doc, title, exists_on_server, old_doc)
+        }; // Lock is dropped here
 
         let client = self.client.clone();
         let slug_owned = slug.to_string();
-        let title = entry.summary.title.clone();
-        let root_hash = new_doc.root_hash;
-        let nodes = new_doc.nodes.clone();
 
-        let response = self.run_async(async move {
-            client
-                .upload_post(&slug_owned, title.as_deref(), root_hash, nodes)
-                .await
-        })?;
+        // Check if this is a new post or an update
+        if exists_on_server {
+            // This is an update - use delta update
+            debug!("Post '{}' exists on server, using delta update", slug);
 
-        info!("Post uploaded successfully: {}", response.slug);
+            let old_doc = old_doc
+                .ok_or_else(|| anyhow::anyhow!("Post exists on server but old_ast is None"))?;
+
+            let old_root = old_doc.root_hash;
+            let new_root = new_doc.root_hash;
+
+            // Compute delta: nodes in new but not in old
+            let mut added_nodes = HashMap::new();
+            for (hash, node) in &new_doc.nodes {
+                if !old_doc.nodes.contains_key(hash) {
+                    added_nodes.insert(*hash, node.clone());
+                }
+            }
+
+            // Compute removed hashes: nodes in old but not in new
+            let mut removed_hashes = Vec::new();
+            for hash in old_doc.nodes.keys() {
+                if !new_doc.nodes.contains_key(hash) {
+                    removed_hashes.push(*hash);
+                }
+            }
+
+            debug!(
+                "Delta: {} nodes added, {} nodes removed",
+                added_nodes.len(),
+                removed_hashes.len()
+            );
+
+            let response = self.run_async(async move {
+                client
+                    .update_post_delta(&slug_owned, old_root, new_root, added_nodes, removed_hashes)
+                    .await
+            })?;
+
+            info!(
+                "Post updated successfully: {} (delta: +{} nodes, -{} nodes)",
+                response.slug, response.nodes_added, response.nodes_removed
+            );
+        } else {
+            // This is a new post - use create
+            debug!("Post '{}' is new, creating on server", slug);
+
+            let root_hash = new_doc.root_hash;
+            let nodes = new_doc.nodes.clone();
+
+            let response = self.run_async(async move {
+                client
+                    .upload_post(&slug_owned, title.as_deref(), root_hash, nodes)
+                    .await
+            })?;
+
+            info!("Post created successfully: {}", response.slug);
+
+            // Mark post as existing on server
+            let mut cache = self.cache.write().unwrap();
+            if let Some(entry) = cache.get_mut(slug) {
+                entry.exists_on_server = true;
+            }
+        }
 
         Ok(())
     }
 
     /// Get file attributes for a post
     fn get_file_attr(&self, inode: u64, slug: &str) -> FileAttr {
-        let cache = self.cache.read().unwrap();
-        let size = if let Some(entry) = cache.get(slug) {
-            if let Some(markdown) = &entry.markdown {
-                markdown.len() as u64
+        let (size, mtime, atime) = {
+            let cache = self.cache.read().unwrap();
+            if let Some(entry) = cache.get(slug) {
+                let size = if let Some(markdown) = &entry.markdown {
+                    markdown.len() as u64
+                } else {
+                    // Estimate size if not loaded
+                    4096
+                };
+                (size, entry.modified_at, entry.accessed_at)
             } else {
-                // Estimate size if not loaded
-                4096
+                let now = SystemTime::now();
+                (4096, now, now)
             }
-        } else {
-            4096
-        };
+        }; // Lock is explicitly dropped here
 
         FileAttr {
             ino: inode,
             size,
             blocks: (size + 511) / 512,
-            atime: SystemTime::now(),
-            mtime: SystemTime::now(),
-            ctime: SystemTime::now(),
-            crtime: SystemTime::now(),
+            atime,
+            mtime,
+            ctime: mtime,
+            crtime: mtime,
             kind: FileType::RegularFile,
             perm: 0o644,
             nlink: 1,
@@ -396,6 +503,13 @@ impl Filesystem for BlogGenFS {
                 return;
             }
         };
+
+        // Filter out vim temporary files
+        if is_vim_temp_file(name_str) {
+            debug!("Ignoring vim temporary file: {}", name_str);
+            reply.error(ENOENT);
+            return;
+        }
 
         // Remove .md extension if present
         let slug = name_str.strip_suffix(".md").unwrap_or(name_str);
@@ -631,10 +745,14 @@ impl Filesystem for BlogGenFS {
 
         match self.flush_post(&slug) {
             Ok(_) => {
-                // Clear dirty flag
+                // Clear dirty flag and drop old_ast to save memory
                 let mut cache = self.cache.write().unwrap();
                 if let Some(entry) = cache.get_mut(&slug) {
                     entry.dirty = false;
+                    // Drop old_ast to save ~500KB-1MB per post
+                    // We can restore it from current ast on next edit
+                    entry.old_ast = None;
+                    debug!("Post '{}' flushed and cleaned, dropped old_ast to save memory", slug);
                 }
                 reply.ok();
             }
@@ -685,9 +803,16 @@ impl Filesystem for BlogGenFS {
             if let Some(slug) = self.get_slug(ino) {
                 let mut cache = self.cache.write().unwrap();
                 if let Some(entry) = cache.get_mut(&slug) {
+                    // If old_ast is None (post was flushed) but post exists on server,
+                    // preserve current AST for delta computation before clearing
+                    if entry.old_ast.is_none() && entry.ast.is_some() && entry.exists_on_server {
+                        debug!("Post '{}' being truncated, preserving AST for delta", slug);
+                        entry.old_ast = entry.ast.clone();
+                    }
                     entry.markdown = Some(String::new());
                     entry.ast = None;
                     entry.dirty = true;
+                    entry.mark_modified();
                 }
             }
         }
@@ -746,6 +871,13 @@ impl Filesystem for BlogGenFS {
             }
         };
 
+        // Filter out vim temporary files
+        if is_vim_temp_file(name_str) {
+            debug!("Blocking creation of vim temporary file: {}", name_str);
+            reply.error(libc::EACCES);
+            return;
+        }
+
         let slug = if name_str.ends_with(".md") {
             &name_str[..name_str.len() - 3]
         } else {
@@ -771,16 +903,11 @@ impl Filesystem for BlogGenFS {
         };
 
         let mut cache = self.cache.write().unwrap();
-        cache.insert(
-            slug.to_string(),
-            CacheEntry {
-                summary,
-                ast: None,
-                markdown: Some(String::new()), // Empty initial content
-                dirty: true, // Mark as dirty since it's new
-                accessed_at: SystemTime::now(),
-            },
-        );
+        let mut entry = CacheEntry::new(summary);
+        entry.markdown = Some(String::new()); // Empty initial content
+        entry.dirty = true; // Mark as dirty since it's new
+        entry.exists_on_server = false; // New post, doesn't exist on server yet
+        cache.insert(slug.to_string(), entry);
         drop(cache);
 
         // Return file attributes
@@ -956,5 +1083,54 @@ mod tests {
         assert_eq!(ROOT_INODE, 1);
         assert_eq!(FIRST_FILE_INODE, 2);
         assert!(ATTR_TTL.as_secs() > 0);
+    }
+
+    /// Test vim temporary file detection
+    #[test]
+    fn test_is_vim_temp_file() {
+        // Swap files
+        assert!(is_vim_temp_file(".test.md.swp"));
+        assert!(is_vim_temp_file(".test.md.swo"));
+        assert!(is_vim_temp_file(".test.md.swn"));
+
+        // Undo files
+        assert!(is_vim_temp_file(".test.md.un~"));
+
+        // Backup files
+        assert!(is_vim_temp_file("test.md~"));
+        assert!(is_vim_temp_file("test~"));
+
+        // Numbered files
+        assert!(is_vim_temp_file("4913"));
+        assert!(is_vim_temp_file("12345"));
+
+        // Normal files (should not be detected as temp files)
+        assert!(!is_vim_temp_file("test.md"));
+        assert!(!is_vim_temp_file("my-post.md"));
+        assert!(!is_vim_temp_file("post-123.md"));
+        assert!(!is_vim_temp_file("README"));
+    }
+
+    /// Test marking cache entry as modified
+    #[test]
+    fn test_cache_entry_mark_modified() {
+        let summary = PostSummary {
+            slug: "test-post".to_string(),
+            title: None,
+            created_at: "2026-01-19T00:00:00Z".to_string(),
+            updated_at: "2026-01-19T00:00:00Z".to_string(),
+            published: false,
+        };
+
+        let mut entry = CacheEntry::new(summary);
+        let first_modified = entry.modified_at;
+        let first_access = entry.accessed_at;
+
+        // Wait a tiny bit
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        entry.mark_modified();
+        assert!(entry.modified_at > first_modified);
+        assert!(entry.accessed_at > first_access);
     }
 }

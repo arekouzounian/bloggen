@@ -113,9 +113,9 @@ pub async fn update_post_delta(
     // Insert new nodes
     db.insert_nodes(&req.added_nodes).await?;
 
-    // Update reference counts
-    db.increment_tree_refs(&req.new_root).await?;
-    db.decrement_tree_refs(&req.old_root).await?;
+    // Update reference counts using smart delta
+    // This only updates nodes that changed, not the entire tree
+    db.update_tree_refs_delta(&req.old_root, &req.new_root).await?;
 
     // Update post root
     let updated = db

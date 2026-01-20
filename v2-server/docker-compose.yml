@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bloggen-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bloggen}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Please set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-bloggen}
+      # Performance tuning
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Persistent database storage
+      - postgres_data:/var/lib/postgresql/data
+      # Optional: custom postgresql.conf
+      # - ./postgresql.conf:/etc/postgresql/postgresql.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bloggen}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - bloggen-network
+    # Optional: resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  server:
+    build:
+      context: ..
+      dockerfile: v2-server/Dockerfile
+    image: bloggen-server:latest
+    container_name: bloggen-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Override config.json with environment variables if needed
+      RUST_LOG: ${RUST_LOG:-info}
+      # The server reads DATABASE_URL from config.json, but this can override it
+      # DATABASE_URL: postgres://bloggen:${POSTGRES_PASSWORD}@postgres:5432/bloggen
+    ports:
+      - "${SERVER_PORT:-3000}:3000"
+    volumes:
+      # Mount config file
+      - ./config.json:/etc/bloggen/config.json:ro
+      # Persistent logs
+      - server_logs:/var/log/bloggen
+      # Optional: mount migrations if you want to update them without rebuilding
+      # - ./migrations:/app/migrations:ro
+    networks:
+      - bloggen-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Optional: resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+networks:
+  bloggen-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  server_logs:
+    driver: local
