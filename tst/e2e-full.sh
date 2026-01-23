@@ -161,7 +161,12 @@ else
     fail "Client build failed"
     exit 1
 fi
-BGC_BIN="$REPO_ROOT/client/bgc/target/debug/bgc"
+# Check workspace location first, then local
+if [ -f "$REPO_ROOT/target/debug/bgc" ]; then
+    BGC_BIN="$REPO_ROOT/target/debug/bgc"
+else
+    BGC_BIN="$REPO_ROOT/client/bgc/target/debug/bgc"
+fi
 
 log_step "Building server (v2-server)..."
 if (cd "$REPO_ROOT/v2-server" && DATABASE_URL="$DB_URL" cargo build --quiet 2>&1); then
@@ -170,7 +175,12 @@ else
     fail "Server build failed"
     exit 1
 fi
-SERVER_BIN="$REPO_ROOT/v2-server/target/debug/v2-server"
+# Check workspace location first, then local
+if [ -f "$REPO_ROOT/target/debug/v2-server" ]; then
+    SERVER_BIN="$REPO_ROOT/target/debug/v2-server"
+else
+    SERVER_BIN="$REPO_ROOT/v2-server/target/debug/v2-server"
+fi
 
 # ============================================================================
 # Phase 2: Setup Database

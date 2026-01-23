@@ -11,6 +11,7 @@ A simplified blogging framework for personal use.
   - [Server-side](#server-side)
   - [Client-Side](#client-side)
 - [Usage](#usage)
+- [Testing](#testing)
 ---
 
 The rough ideas for the project can be found in [the idea doc](./idea-doc.md), where I initially put my ideas for the project. 
@@ -108,3 +109,101 @@ The basic usage loop is as follows:
     The port defaults to port 2222, but if you'd like to change it, you would need to change it in the above declaration, as well as the `port` key in the  `server/docker.json` file. If you do make this change, make sure to re-build the docker containers accordingly.
 
     If you're already in the post directory, you needn't specify the target flag, and can simply run `bloggen post upload`, assuming the other information has been configured/defaulted correctly. 
+
+# Testing
+
+BlogGen has a comprehensive test suite that includes unit tests and integration tests.
+
+## Quick Start
+
+Run all tests with a single command:
+```bash
+./run-tests.sh
+```
+
+Or use Make:
+```bash
+make test
+```
+
+## Test Categories
+
+### Unit Tests
+Test individual components in isolation:
+
+```bash
+# Run all unit tests (client + server in parallel)
+./run-tests.sh --unit
+# or
+make test-unit
+
+# Run only client tests
+make test-client
+
+# Run only server tests
+make test-server
+```
+
+### Integration Tests
+Test complete workflows end-to-end:
+
+```bash
+# Run all integration tests
+./run-tests.sh --integration
+# or
+make test-integration
+
+# Run specific integration tests
+make test-e2e-client    # Client-only tests (no server required)
+make test-e2e-full      # Full client + server tests
+make test-e2e-fuse      # FUSE filesystem tests
+```
+
+## Test Options
+
+The unified test runner supports several options:
+
+```bash
+# Run with verbose output
+./run-tests.sh --verbose
+
+# Run unit tests sequentially instead of parallel
+./run-tests.sh --sequential
+
+# Run specific test suites
+./run-tests.sh --e2e-client
+./run-tests.sh --e2e-full
+./run-tests.sh --e2e-fuse
+```
+
+## Environment Variables
+
+Integration tests support configuration via environment variables:
+
+```bash
+# Skip database setup (use existing DB)
+SKIP_DB_SETUP=1 ./run-tests.sh --integration
+
+# Keep database running after tests
+KEEP_DB_RUNNING=1 ./run-tests.sh --integration
+
+# Use custom server port
+SERVER_PORT=8080 ./run-tests.sh --integration
+```
+
+## Test Structure
+
+- **Unit Tests**: Located in `src/` directories as Rust test modules
+  - Client: `client/bgc/src/**/*.rs` (106+ tests)
+  - Server: `v2-server/src/**/*.rs` (33+ tests)
+  
+- **Integration Tests**: Located in `tst/` directory
+  - `e2e-client.sh` - Client-only workflow tests
+  - `e2e-full.sh` - Complete client + server integration
+  - `e2e-fuse.sh` - FUSE filesystem integration
+
+For more details on integration tests, see [tst/README.md](./tst/README.md).
+
+## Continuous Integration
+
+All tests are designed to run in CI environments. See [tst/README.md](./tst/README.md) for CI configuration examples. 
