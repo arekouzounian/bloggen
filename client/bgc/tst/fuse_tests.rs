@@ -1,7 +1,6 @@
 use bgc::fuse::BlogGenFS;
 use bgc::http::Client;
 use mockito::Server;
-use std::time::Duration;
 
 /// Test creating a BlogGenFS instance
 #[test]

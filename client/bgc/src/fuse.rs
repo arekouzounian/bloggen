@@ -3,6 +3,20 @@
 //! This module provides a FUSE filesystem that allows interacting with BlogGen posts
 //! as if they were regular markdown files in a directory. Posts are fetched from the
 //! server on read, cached locally, and pushed back using delta updates on write.
+//!
+//! ## Caching Strategy
+//!
+//! The filesystem uses a two-tier caching approach:
+//!
+//! - **Metadata cache** (unlimited): Stores post slugs, titles, and timestamps for all posts
+//!   from the server. This enables fast directory listings (`ls`) without memory concerns.
+//!
+//! - **Content cache** (limited): Stores AST and rendered markdown only for recently accessed
+//!   posts. Limited to 5 entries by default (configurable via `max_loaded_entries`).
+//!   Uses LRU eviction when the limit is exceeded, but never evicts dirty (unsaved) content.
+//!
+//! This ensures memory usage scales with the number of actively edited files (~1-5) rather
+//! than the total number of posts on the server (potentially hundreds).
 
 use anyhow::{Context, Result};
 use fuser::{
@@ -11,6 +25,7 @@ use fuser::{
 };
 use libc::{ENOENT, ENOSYS};
 use log::{debug, error, info};
+use nix::unistd::{Gid, Uid};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::Path;
@@ -28,8 +43,20 @@ const ROOT_INODE: u64 = 1;
 /// Starting inode for dynamically allocated files
 const FIRST_FILE_INODE: u64 = 2;
 
+/// Larger block size is better, surely
+const BLOCK_SIZE: u32 = 4096;
+
 /// Time-to-live for cached attributes (in seconds)
 const ATTR_TTL: Duration = Duration::from_secs(60);
+
+/// Time-to-live for post list refresh cache (in seconds)
+/// Prevents redundant server calls when multiple FUSE operations happen in quick succession
+const REFRESH_TTL: Duration = Duration::from_secs(3);
+
+/// Default maximum number of posts to keep loaded with content (AST + markdown)
+/// The metadata cache (slugs, titles, timestamps) is unlimited, but content is limited
+/// to avoid excessive memory usage. Posts are evicted using LRU policy when this limit is exceeded.
+const DEFAULT_MAX_LOADED_ENTRIES: usize = 5;
 
 /// Check if a filename is a vim temporary file that should be ignored
 fn is_vim_temp_file(name: &str) -> bool {
@@ -52,21 +79,30 @@ fn is_vim_temp_file(name: &str) -> bool {
 }
 
 /// Cache entry for a post
+///
+/// The cache uses a two-tier strategy:
+/// - **Metadata** (always present): `summary`, `dirty`, `exists_on_server`, timestamps
+///   These are lightweight and kept for all posts to support directory listings.
+/// - **Content** (optional): `ast`, `old_ast`, `markdown`
+///   These are memory-intensive and only kept for recently accessed posts.
+///   Limited by `max_loaded_entries` using LRU eviction.
+///
+/// An entry is considered "loaded" (has content) when `markdown.is_some()`.
 #[derive(Debug, Clone)]
 pub(crate) struct CacheEntry {
-    /// Post metadata from server
+    /// Post metadata from server (lightweight, always present)
     summary: PostSummary,
-    /// Original AST from server (for delta computation)
+    /// Original AST from server for delta computation (heavy, LRU-evicted)
     old_ast: Option<CasDocument>,
-    /// Current AST (modified locally or fetched)
+    /// Current AST - modified locally or fetched (heavy, LRU-evicted)
     ast: Option<CasDocument>,
-    /// Cached markdown rendering
+    /// Cached markdown rendering (heavy, LRU-evicted)
     markdown: Option<String>,
-    /// Whether the post has been modified locally
+    /// Whether the post has been modified locally (prevents eviction)
     dirty: bool,
     /// Whether the post exists on the server (vs being a local-only draft)
     exists_on_server: bool,
-    /// Last access time
+    /// Last access time (for LRU eviction)
     accessed_at: SystemTime,
     /// Last modification time
     modified_at: SystemTime,
@@ -111,7 +147,8 @@ pub struct BlogGenFS {
     _runtime: Arc<tokio::runtime::Runtime>,
     /// Handle to the runtime for spawning tasks
     runtime_handle: tokio::runtime::Handle,
-    /// Cache of posts (slug -> cache entry)
+    /// Cache of posts: metadata (unlimited) + content (limited by max_loaded_entries)
+    /// All posts have metadata entries, but only recently accessed posts have content loaded
     cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
     /// Inode mapping (inode -> slug)
     inodes: Arc<RwLock<HashMap<u64, String>>>,
@@ -119,6 +156,10 @@ pub struct BlogGenFS {
     slugs: Arc<RwLock<HashMap<String, u64>>>,
     /// Next available inode number
     next_inode: Arc<RwLock<u64>>,
+    /// Maximum number of posts to keep loaded with content (AST + markdown)
+    max_loaded_entries: usize,
+    /// Last time the post list was refreshed from the server
+    last_refresh: Arc<RwLock<Option<SystemTime>>>,
 }
 
 impl BlogGenFS {
@@ -145,23 +186,19 @@ impl BlogGenFS {
             inodes: Arc::new(RwLock::new(HashMap::new())),
             slugs: Arc::new(RwLock::new(HashMap::new())),
             next_inode: Arc::new(RwLock::new(FIRST_FILE_INODE)),
+            max_loaded_entries: DEFAULT_MAX_LOADED_ENTRIES,
+            last_refresh: Arc::new(RwLock::new(None)),
         }
     }
 
     /// Helper to run async code from sync context
     /// Uses a separate thread to avoid "runtime within runtime" issues
-    fn run_async<F, T>(&self, future: F) -> Result<T>
+    fn force_block_on<F, T>(&self, future: F) -> Result<T>
     where
         F: std::future::Future<Output = anyhow::Result<T>> + Send + 'static,
         T: Send + 'static,
     {
-        let handle = self.runtime_handle.clone();
-        let result = std::thread::spawn(move || {
-            handle.block_on(future)
-        })
-        .join()
-        .map_err(|e| anyhow::anyhow!("Thread panicked: {:?}", e))??;
-        Ok(result)
+        self.runtime_handle.block_on(future)
     }
 
     /// Mount the filesystem at the given path
@@ -176,8 +213,7 @@ impl BlogGenFS {
             // Users will need to manually unmount with: fusermount -u <mount_point>
         ];
 
-        fuser::mount2(self, mount_point, &options)
-            .context("Failed to mount FUSE filesystem")?;
+        fuser::mount2(self, mount_point, &options).context("Failed to mount FUSE filesystem")?;
 
         Ok(())
     }
@@ -208,27 +244,97 @@ impl BlogGenFS {
         self.inodes.read().unwrap().get(&inode).cloned()
     }
 
+    /// Evict content (AST + markdown) from least recently used loaded entries
+    /// Metadata (slug, title, timestamps) is always preserved for directory listings
+    /// This method MUST be called while NOT holding the cache write lock
+    fn evict_lru_entries(&self) {
+        let mut cache = self.cache.write().unwrap();
+
+        // Count how many entries have content loaded
+        let loaded_count = cache.iter().filter(|(_, entry)| entry.is_loaded()).count();
+
+        if loaded_count <= self.max_loaded_entries {
+            return;
+        }
+
+        let to_evict_count = loaded_count - self.max_loaded_entries;
+        debug!(
+            "Loaded entries {} exceeds limit {}, evicting content from {} entries",
+            loaded_count, self.max_loaded_entries, to_evict_count
+        );
+
+        // Collect loaded entries sorted by access time (oldest first)
+        // Filter out dirty entries - they cannot be evicted
+        let mut eviction_candidates: Vec<(String, SystemTime)> = cache
+            .iter()
+            .filter(|(_, entry)| entry.is_loaded() && !entry.dirty)
+            .map(|(slug, entry)| (slug.clone(), entry.accessed_at))
+            .collect();
+
+        eviction_candidates.sort_by_key(|(_, accessed_at)| *accessed_at);
+
+        // Evict content from the oldest entries (preserve metadata)
+        let to_evict: Vec<String> = eviction_candidates
+            .into_iter()
+            .take(to_evict_count)
+            .map(|(slug, _)| slug)
+            .collect();
+
+        for slug in &to_evict {
+            if let Some(entry) = cache.get_mut(slug) {
+                entry.ast = None;
+                entry.old_ast = None;
+                entry.markdown = None;
+                debug!("Evicted content for post: {} (metadata preserved)", slug);
+            }
+        }
+
+        let loaded_after = cache.iter().filter(|(_, entry)| entry.is_loaded()).count();
+        info!(
+            "Evicted content from {} posts, loaded entries now: {}",
+            to_evict.len(),
+            loaded_after
+        );
+    }
+
     /// Refresh the post list from the server
     fn refresh_posts(&self) -> Result<()> {
+        // Check if we refreshed recently to avoid redundant server calls
+        {
+            let last = self.last_refresh.read().unwrap();
+            if let Some(last_time) = *last {
+                let elapsed = SystemTime::now()
+                    .duration_since(last_time)
+                    .unwrap_or(Duration::from_secs(0));
+                if elapsed < REFRESH_TTL {
+                    debug!(
+                        "Skipping refresh, last refresh was {:?} ago (TTL: {:?})",
+                        elapsed, REFRESH_TTL
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
         debug!("Refreshing post list from server");
 
         let client = self.client.clone();
         let posts = self
-            .run_async(async move { client.list_posts().await })
+            .force_block_on(async move { client.list_posts().await })
             .context("Failed to list posts from server")?;
 
         let mut cache = self.cache.write().unwrap();
 
         // Update cache with new posts
         for summary in posts.posts {
-            let slug = summary.slug.clone();
+            let slug = &summary.slug;
 
             // If entry exists and is dirty, don't overwrite
-            if let Some(entry) = cache.get(&slug) {
-                if entry.dirty {
-                    debug!("Skipping update for dirty post: {}", slug);
-                    continue;
-                }
+            if let Some(entry) = cache.get(slug)
+                && entry.dirty
+            {
+                debug!("Skipping update for dirty post: {}", slug);
+                continue;
             }
 
             // Allocate inode for this post
@@ -236,12 +342,22 @@ impl BlogGenFS {
 
             // Update or insert cache entry
             let summary_clone = summary.clone();
-            let entry = cache.entry(slug).or_insert_with(|| CacheEntry::new(summary.clone()));
+            let entry = cache
+                .entry(slug.clone())
+                .or_insert_with(|| CacheEntry::new(summary.clone()));
             entry.summary = summary_clone;
             entry.exists_on_server = true;
         }
 
         info!("Refreshed {} posts from server", cache.len());
+        drop(cache);
+
+        // Update last refresh timestamp
+        *self.last_refresh.write().unwrap() = Some(SystemTime::now());
+
+        // Evict LRU entries if cache is over limit
+        self.evict_lru_entries();
+
         Ok(())
     }
 
@@ -253,7 +369,7 @@ impl BlogGenFS {
         let client = self.client.clone();
         let slug_owned = slug.to_string();
         let response = self
-            .run_async(async move { client.download_post(&slug_owned).await })
+            .force_block_on(async move { client.download_post(&slug_owned).await })
             .context("Failed to download post from server")?;
 
         // Convert to NodeStore
@@ -265,10 +381,12 @@ impl BlogGenFS {
         let store = cas_doc.to_store();
 
         // Render to markdown
-        let root_node = store.get(&response.root_hash)
+        let root_node = store
+            .get(&response.root_hash)
             .context("Root node not found in store")?;
         let mut renderer = MarkdownRenderer::new(&store);
-        let markdown = renderer.render(root_node)
+        let markdown = renderer
+            .render(root_node)
             .context("Failed to render AST to markdown")?;
 
         // Update cache
@@ -281,6 +399,10 @@ impl BlogGenFS {
             entry.exists_on_server = true;
             entry.mark_accessed();
         }
+        drop(cache);
+
+        // Evict LRU entries if cache is over limit
+        self.evict_lru_entries();
 
         Ok(markdown)
     }
@@ -289,17 +411,20 @@ impl BlogGenFS {
     fn get_markdown(&self, slug: &str) -> Result<String> {
         // Check cache first
         {
-            let cache = self.cache.read().unwrap();
-            if let Some(entry) = cache.get(slug) {
+            let mut cache = self.cache.write().unwrap();
+            let cache_size = cache.len();
+            if let Some(entry) = cache.get_mut(slug) {
                 if let Some(markdown) = &entry.markdown {
-                    debug!("Cache hit for post: {}", slug);
-                    return Ok(markdown.clone());
+                    debug!("Cache hit for post: {} (cache size: {})", slug, cache_size);
+                    let result = markdown.clone();
+                    entry.mark_accessed();
+                    return Ok(result);
                 }
             }
         }
 
         // Cache miss - fetch from server
-        debug!("Cache miss for post: {}", slug);
+        info!("Cache miss for post: {}", slug);
         self.fetch_post(slug)
     }
 
@@ -311,8 +436,8 @@ impl BlogGenFS {
         let mut new_store = NodeStore::new();
         let new_root = parse_markdown(&markdown, &mut new_store)
             .map_err(|e| anyhow::anyhow!("Failed to parse markdown: {}", e))?;
-        let new_doc = CasDocument::new(&new_store, new_root)
-            .context("Failed to create CasDocument")?;
+        let new_doc =
+            CasDocument::new(&new_store, new_root).context("Failed to create CasDocument")?;
 
         // Update cache with new content
         let mut cache = self.cache.write().unwrap();
@@ -320,7 +445,10 @@ impl BlogGenFS {
             // If old_ast is None (file was clean), preserve current ast for delta computation
             // This happens when a flushed file is edited again
             if entry.old_ast.is_none() && entry.ast.is_some() {
-                debug!("Post '{}' was clean, saving current AST for delta computation", slug);
+                debug!(
+                    "Post '{}' was clean, saving current AST for delta computation",
+                    slug
+                );
                 entry.old_ast = entry.ast.clone();
             }
 
@@ -344,7 +472,9 @@ impl BlogGenFS {
         // Clone all needed data while holding the lock, then drop it before network I/O
         let (new_doc, title, exists_on_server, old_doc) = {
             let cache = self.cache.read().unwrap();
-            let entry = cache.get(slug).context(format!("Post '{}' not found in cache during flush", slug))?;
+            let entry = cache
+                .get(slug)
+                .context(format!("Post '{}' not found in cache during flush", slug))?;
 
             if !entry.dirty {
                 debug!("Post '{}' is not dirty, skipping flush", slug);
@@ -406,7 +536,7 @@ impl BlogGenFS {
                 removed_hashes.len()
             );
 
-            let response = self.run_async(async move {
+            let response = self.force_block_on(async move {
                 client
                     .update_post_delta(&slug_owned, old_root, new_root, added_nodes, removed_hashes)
                     .await
@@ -423,7 +553,7 @@ impl BlogGenFS {
             let root_hash = new_doc.root_hash;
             let nodes = new_doc.nodes.clone();
 
-            let response = self.run_async(async move {
+            let response = self.force_block_on(async move {
                 client
                     .upload_post(&slug_owned, title.as_deref(), root_hash, nodes)
                     .await
@@ -462,7 +592,7 @@ impl BlogGenFS {
         FileAttr {
             ino: inode,
             size,
-            blocks: (size + 511) / 512,
+            blocks: size.div_ceil(512),
             atime,
             mtime,
             ctime: mtime,
@@ -470,10 +600,10 @@ impl BlogGenFS {
             kind: FileType::RegularFile,
             perm: 0o644,
             nlink: 1,
-            uid: unsafe { libc::getuid() },
-            gid: unsafe { libc::getgid() },
+            uid: Uid::current().as_raw(),
+            gid: Gid::current().as_raw(),
             rdev: 0,
-            blksize: 512,
+            blksize: BLOCK_SIZE,
             flags: 0,
         }
     }
@@ -547,8 +677,8 @@ impl Filesystem for BlogGenFS {
                 kind: FileType::Directory,
                 perm: 0o755,
                 nlink: 2,
-                uid: unsafe { libc::getuid() },
-                gid: unsafe { libc::getgid() },
+                uid: Uid::current().as_raw(),
+                gid: Gid::current().as_raw(),
                 rdev: 0,
                 blksize: 512,
                 flags: 0,
@@ -641,7 +771,7 @@ impl Filesystem for BlogGenFS {
             cache
                 .get(&slug)
                 .and_then(|entry| entry.markdown.clone())
-                .unwrap_or_else(String::new)
+                .unwrap_or_default()
         };
 
         // Convert new data to string
@@ -732,7 +862,14 @@ impl Filesystem for BlogGenFS {
         reply.ok();
     }
 
-    fn flush(&mut self, _req: &Request, ino: u64, _fh: u64, _lock_owner: u64, reply: fuser::ReplyEmpty) {
+    fn flush(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        _fh: u64,
+        _lock_owner: u64,
+        reply: fuser::ReplyEmpty,
+    ) {
         debug!("flush(ino={})", ino);
 
         let slug = match self.get_slug(ino) {
@@ -752,7 +889,10 @@ impl Filesystem for BlogGenFS {
                     // Drop old_ast to save ~500KB-1MB per post
                     // We can restore it from current ast on next edit
                     entry.old_ast = None;
-                    debug!("Post '{}' flushed and cleaned, dropped old_ast to save memory", slug);
+                    debug!(
+                        "Post '{}' flushed and cleaned, dropped old_ast to save memory",
+                        slug
+                    );
                 }
                 reply.ok();
             }
@@ -830,8 +970,8 @@ impl Filesystem for BlogGenFS {
                 kind: FileType::Directory,
                 perm: 0o755,
                 nlink: 2,
-                uid: 1000,
-                gid: 1000,
+                uid: Uid::current().as_raw(),
+                gid: Gid::current().as_raw(),
                 rdev: 0,
                 blksize: 512,
                 flags: 0,
@@ -878,11 +1018,7 @@ impl Filesystem for BlogGenFS {
             return;
         }
 
-        let slug = if name_str.ends_with(".md") {
-            &name_str[..name_str.len() - 3]
-        } else {
-            name_str
-        };
+        let slug = name_str.strip_suffix(".md").unwrap_or(name_str);
 
         // Allocate inode for new file
         let ino = self.allocate_inode(slug.to_string());
@@ -1132,5 +1268,229 @@ mod tests {
         entry.mark_modified();
         assert!(entry.modified_at > first_modified);
         assert!(entry.accessed_at > first_access);
+    }
+
+    /// Test LRU eviction when loaded entries exceed limit
+    #[test]
+    fn test_lru_eviction() {
+        let mut fs = BlogGenFS::new("http://localhost:3000".to_string());
+        fs.max_loaded_entries = 3; // Small limit for testing
+
+        // Add 4 posts with content loaded
+        let mut cache = fs.cache.write().unwrap();
+        for i in 0..4 {
+            let summary = PostSummary {
+                slug: format!("post-{}", i),
+                title: Some(format!("Post {}", i)),
+                created_at: "2026-01-19T00:00:00Z".to_string(),
+                updated_at: "2026-01-19T00:00:00Z".to_string(),
+                published: false,
+            };
+            let mut entry = CacheEntry::new(summary);
+            entry.markdown = Some(format!("Content {}", i));
+            entry.ast = Some(CasDocument {
+                root_hash: crate::ast::Blake3Hash::new([0u8; 32]),
+                nodes: HashMap::new(),
+            });
+
+            // Make entries have different access times
+            entry.accessed_at = SystemTime::now()
+                - std::time::Duration::from_secs((4 - i) as u64 * 10);
+
+            cache.insert(format!("post-{}", i), entry);
+        }
+        drop(cache);
+
+        // Trigger eviction
+        fs.evict_lru_entries();
+
+        let cache = fs.cache.read().unwrap();
+
+        // All metadata entries should still exist
+        assert_eq!(cache.len(), 4);
+        assert!(cache.contains_key("post-0"));
+        assert!(cache.contains_key("post-1"));
+        assert!(cache.contains_key("post-2"));
+        assert!(cache.contains_key("post-3"));
+
+        // post-0 content should be evicted (oldest accessed_at)
+        assert!(!cache.get("post-0").unwrap().is_loaded());
+        assert!(cache.get("post-0").unwrap().markdown.is_none());
+
+        // Others should still have content loaded
+        assert!(cache.get("post-1").unwrap().is_loaded());
+        assert!(cache.get("post-2").unwrap().is_loaded());
+        assert!(cache.get("post-3").unwrap().is_loaded());
+    }
+
+    /// Test that dirty entries' content is not evicted
+    #[test]
+    fn test_lru_preserves_dirty_entries() {
+        let mut fs = BlogGenFS::new("http://localhost:3000".to_string());
+        fs.max_loaded_entries = 2; // Very small limit
+
+        let mut cache = fs.cache.write().unwrap();
+
+        // Add 3 loaded entries, make the oldest one dirty
+        for i in 0..3 {
+            let summary = PostSummary {
+                slug: format!("post-{}", i),
+                title: Some(format!("Post {}", i)),
+                created_at: "2026-01-19T00:00:00Z".to_string(),
+                updated_at: "2026-01-19T00:00:00Z".to_string(),
+                published: false,
+            };
+            let mut entry = CacheEntry::new(summary);
+            entry.markdown = Some(format!("Content {}", i));
+            entry.ast = Some(CasDocument {
+                root_hash: crate::ast::Blake3Hash::new([0u8; 32]),
+                nodes: HashMap::new(),
+            });
+            entry.accessed_at = SystemTime::now()
+                - std::time::Duration::from_secs((3 - i) as u64 * 10);
+
+            // Make post-0 dirty
+            if i == 0 {
+                entry.dirty = true;
+            }
+
+            cache.insert(format!("post-{}", i), entry);
+        }
+        drop(cache);
+
+        // Trigger eviction
+        fs.evict_lru_entries();
+
+        let cache = fs.cache.read().unwrap();
+
+        // All metadata should be preserved
+        assert!(cache.contains_key("post-0"));
+        assert!(cache.contains_key("post-1"));
+        assert!(cache.contains_key("post-2"));
+
+        // post-0 content should NOT be evicted even though it's oldest (because it's dirty)
+        assert!(cache.get("post-0").unwrap().is_loaded());
+        assert!(cache.get("post-0").unwrap().markdown.is_some());
+
+        // post-1 content should be evicted instead (next oldest non-dirty)
+        assert!(!cache.get("post-1").unwrap().is_loaded());
+        assert!(cache.get("post-1").unwrap().markdown.is_none());
+
+        // post-2 should remain loaded (newest)
+        assert!(cache.get("post-2").unwrap().is_loaded());
+    }
+
+    /// Test that eviction doesn't happen when loaded entries are under limit
+    #[test]
+    fn test_no_eviction_when_under_limit() {
+        let mut fs = BlogGenFS::new("http://localhost:3000".to_string());
+        fs.max_loaded_entries = 10;
+
+        let mut cache = fs.cache.write().unwrap();
+        for i in 0..5 {
+            let summary = PostSummary {
+                slug: format!("post-{}", i),
+                title: None,
+                created_at: "2026-01-19T00:00:00Z".to_string(),
+                updated_at: "2026-01-19T00:00:00Z".to_string(),
+                published: false,
+            };
+            let mut entry = CacheEntry::new(summary);
+            entry.markdown = Some(format!("Content {}", i));
+            cache.insert(format!("post-{}", i), entry);
+        }
+        drop(cache);
+
+        // Trigger eviction (should do nothing)
+        fs.evict_lru_entries();
+
+        // All entries and their content should remain
+        let cache = fs.cache.read().unwrap();
+        assert_eq!(cache.len(), 5);
+        for i in 0..5 {
+            assert!(cache.get(&format!("post-{}", i)).unwrap().is_loaded());
+        }
+    }
+
+    /// Test access time updates on cache hit
+    #[test]
+    fn test_access_time_updates() {
+        let fs = BlogGenFS::new("http://localhost:3000".to_string());
+
+        let summary = PostSummary {
+            slug: "test-post".to_string(),
+            title: None,
+            created_at: "2026-01-19T00:00:00Z".to_string(),
+            updated_at: "2026-01-19T00:00:00Z".to_string(),
+            published: false,
+        };
+
+        let mut entry = CacheEntry::new(summary);
+        entry.markdown = Some("# Test".to_string());
+        let first_access = entry.accessed_at;
+
+        {
+            let mut cache = fs.cache.write().unwrap();
+            cache.insert("test-post".to_string(), entry);
+        }
+
+        // Wait a bit
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Access the post (cache hit)
+        let _ = fs.get_markdown("test-post");
+
+        // Access time should have been updated
+        let cache = fs.cache.read().unwrap();
+        let entry = cache.get("test-post").unwrap();
+        assert!(entry.accessed_at > first_access);
+    }
+
+    /// Test that metadata-only entries don't count toward loaded limit
+    #[test]
+    fn test_metadata_only_entries_unlimited() {
+        let mut fs = BlogGenFS::new("http://localhost:3000".to_string());
+        fs.max_loaded_entries = 3;
+
+        let mut cache = fs.cache.write().unwrap();
+
+        // Add 100 metadata-only entries (no content)
+        for i in 0..100 {
+            let summary = PostSummary {
+                slug: format!("post-{}", i),
+                title: Some(format!("Post {}", i)),
+                created_at: "2026-01-19T00:00:00Z".to_string(),
+                updated_at: "2026-01-19T00:00:00Z".to_string(),
+                published: false,
+            };
+            // No markdown or AST - metadata only
+            cache.insert(format!("post-{}", i), CacheEntry::new(summary));
+        }
+
+        // Add 3 entries with content loaded
+        for i in 100..103 {
+            let summary = PostSummary {
+                slug: format!("post-{}", i),
+                title: Some(format!("Post {}", i)),
+                created_at: "2026-01-19T00:00:00Z".to_string(),
+                updated_at: "2026-01-19T00:00:00Z".to_string(),
+                published: false,
+            };
+            let mut entry = CacheEntry::new(summary);
+            entry.markdown = Some(format!("Content {}", i));
+            cache.insert(format!("post-{}", i), entry);
+        }
+        drop(cache);
+
+        // Trigger eviction
+        fs.evict_lru_entries();
+
+        // No eviction should occur - we have 100 metadata entries + 3 loaded
+        // but only the 3 loaded count toward the limit
+        let cache = fs.cache.read().unwrap();
+        assert_eq!(cache.len(), 103); // All entries still present
+
+        let loaded_count = cache.iter().filter(|(_, e)| e.is_loaded()).count();
+        assert_eq!(loaded_count, 3); // Still 3 loaded entries
     }
 }

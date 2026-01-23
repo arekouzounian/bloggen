@@ -83,6 +83,21 @@ pub fn write_json_file(
     std::fs::write(path, json)
 }
 
+pub fn write_msgpack_file(
+    doc: &CasDocument,
+    path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let serialized = match doc.to_msgpack() {
+        Ok(ser) => ser,
+        Err(e) => return Err(Box::new(e)),
+    };
+
+    if let Err(e) = std::fs::write(path, serialized) {
+        return Err(Box::new(e));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

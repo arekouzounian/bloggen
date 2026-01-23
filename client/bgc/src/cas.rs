@@ -5,15 +5,9 @@ use std::collections::{HashMap, HashSet};
 /// A content-addressable storage node.
 ///
 /// Each node is identified by the Blake3 hash of its content.
-/// This enables:
-/// - Deduplication: identical subtrees share the same hash
-/// - Efficient updates: only changed nodes need to be transmitted
-/// - Version history: just store root hash snapshots
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CasNode {
-    /// The Blake3 hash of this node's content
     pub hash: Blake3Hash,
-    /// The actual AST node data
     pub node: AstNode,
 }
 
@@ -24,12 +18,10 @@ impl CasNode {
         Self { hash, node }
     }
 
-    /// Get the hash of this node
-    pub fn hash(&self) -> Blake3Hash {
-        self.hash
+    pub fn hash(&self) -> &Blake3Hash {
+        &self.hash
     }
 
-    /// Get a reference to the underlying AST node
     pub fn node(&self) -> &AstNode {
         &self.node
     }
@@ -40,18 +32,14 @@ impl CasNode {
 /// The hash is computed from:
 /// - Node type discriminant
 /// - Node attributes (level, url, value, etc.)
-/// - Child hashes (not child content)
+/// - Child hashes
 ///
 /// This ensures that identical subtrees always produce the same hash,
 /// regardless of where they appear in the document.
 pub fn compute_hash(node: &AstNode) -> Blake3Hash {
-    // Serialize the node to JSON for hashing
-    // The serde serialization is deterministic and includes the type tag
-    let json = serde_json::to_vec(node)
-        .expect("serialization should never fail for AstNode");
-
-    // Compute Blake3 hash
-    let hash = blake3::hash(&json);
+    let msgpack =
+        rmp_serde::to_vec_named(node).expect("serialization should never fail for AstNode");
+    let hash = blake3::hash(&msgpack);
     Blake3Hash::new(*hash.as_bytes())
 }
 
@@ -74,35 +62,29 @@ impl NodeStore {
     }
 
     /// Store a node and return its hash.
-    ///
-    /// If the node already exists (same hash), it won't be duplicated.
+    /// This function is idempotent.
     pub fn store(&mut self, node: AstNode) -> Blake3Hash {
         let hash = compute_hash(&node);
         self.nodes.insert(hash, node);
         hash
     }
 
-    /// Store multiple nodes and return their hashes
     pub fn store_many(&mut self, nodes: Vec<AstNode>) -> Vec<Blake3Hash> {
         nodes.into_iter().map(|node| self.store(node)).collect()
     }
 
-    /// Retrieve a node by its hash
     pub fn get(&self, hash: &Blake3Hash) -> Option<&AstNode> {
         self.nodes.get(hash)
     }
 
-    /// Check if a node with the given hash exists in the store
     pub fn contains(&self, hash: &Blake3Hash) -> bool {
         self.nodes.contains_key(hash)
     }
 
-    /// Get the number of nodes in the store
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
-    /// Check if the store is empty
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
@@ -116,7 +98,10 @@ impl NodeStore {
     ///
     /// This is useful for serializing a complete document by following
     /// all child references from the root.
-    pub fn walk_tree<'a>(&'a self, root_hash: &'a Blake3Hash) -> Option<Vec<(&'a Blake3Hash, &'a AstNode)>> {
+    pub fn walk_tree<'a>(
+        &'a self,
+        root_hash: &'a Blake3Hash,
+    ) -> Option<Vec<(&'a Blake3Hash, &'a AstNode)>> {
         let mut result = Vec::new();
         let mut visited = std::collections::HashSet::new();
 
@@ -168,7 +153,10 @@ mod hash_map_hex {
     use serde::{Deserialize, Deserializer, Serializer};
     use std::collections::HashMap;
 
-    pub fn serialize<S>(map: &HashMap<Blake3Hash, AstNode>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(
+        map: &HashMap<Blake3Hash, AstNode>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -207,7 +195,6 @@ impl CasDocument {
         Some(Self { root_hash, nodes })
     }
 
-    /// Get the root node
     pub fn root(&self) -> Option<&AstNode> {
         self.nodes.get(&self.root_hash)
     }
@@ -235,49 +222,37 @@ impl CasDocument {
         store
     }
 
-    /// Serialize to JSON
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string(self)
     }
 
-    /// Serialize to pretty-printed JSON
     pub fn to_json_pretty(&self) -> serde_json::Result<String> {
         serde_json::to_string_pretty(self)
     }
 
-    /// Deserialize from JSON
     pub fn from_json(json: &str) -> serde_json::Result<Self> {
         serde_json::from_str(json)
     }
 
-    /// Serialize to MessagePack (compact binary format)
-    ///
-    /// MessagePack provides 60-70% size reduction compared to JSON,
-    /// making it ideal for network transmission while maintaining
-    /// the ability to deserialize back to the same structure.
     pub fn to_msgpack(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
         rmp_serde::to_vec_named(self)
     }
 
-    /// Deserialize from MessagePack
     pub fn from_msgpack(data: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
         rmp_serde::from_slice(data)
     }
 
-    /// Serialize to compressed MessagePack (zstd compression level 3)
-    ///
-    /// This provides an additional 3-4x size reduction over raw MessagePack,
-    /// making it ideal for network transmission. Compression level 3 provides
-    /// a good balance between speed and compression ratio.
-    pub fn to_msgpack_compressed(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    /// compressed with zstd, level indicates the zstd compression level
+    /// (default 3)
+    pub fn to_msgpack_compressed_with_level(
+        &self,
+        level: Option<i32>,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let msgpack = self.to_msgpack()?;
-        Ok(zstd::bulk::compress(&msgpack, 3)?)
+        Ok(zstd::bulk::compress(&msgpack, level.unwrap_or(3))?)
     }
 
     /// Deserialize from compressed MessagePack
-    ///
-    /// Decompresses zstd-compressed data and then deserializes from MessagePack.
-    /// The max_size parameter prevents decompression bombs (default: 10MB).
     pub fn from_msgpack_compressed(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
         let msgpack = zstd::bulk::decompress(data, 10_000_000)?;
         Ok(Self::from_msgpack(&msgpack)?)
@@ -301,10 +276,7 @@ impl CasDocument {
             .collect();
 
         // Nodes in old but not in new (removed)
-        let removed_hashes: Vec<Blake3Hash> = old_hashes
-            .difference(&new_hashes)
-            .copied()
-            .collect();
+        let removed_hashes: Vec<Blake3Hash> = old_hashes.difference(&new_hashes).copied().collect();
 
         DeltaDocument {
             old_root: self.root_hash,
@@ -321,7 +293,6 @@ impl CasDocument {
     ///
     /// Returns None if the old_root doesn't match (conflict).
     pub fn apply_delta(&self, delta: &DeltaDocument) -> Option<CasDocument> {
-        // Verify the delta applies to this document
         if self.root_hash != delta.old_root {
             return None;
         }
@@ -349,15 +320,7 @@ impl CasDocument {
 /// A delta between two CasDocuments.
 ///
 /// This represents the difference between an old and new version of a document,
-/// containing only the nodes that changed. This enables efficient network
-/// transmission for document updates.
-///
-/// # Delta Size
-///
-/// For typical blog post edits (1-5 changed paragraphs), deltas are usually:
-/// - 90-95% smaller than full documents
-/// - Only transmit changed nodes plus new root
-/// - Compress well with zstd (shared context with full doc)
+/// containing only the nodes that changed.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeltaDocument {
     /// The root hash of the old document
@@ -379,7 +342,9 @@ impl DeltaDocument {
 
     /// Check if this delta has any changes
     pub fn is_empty(&self) -> bool {
-        self.added_nodes.is_empty() && self.removed_hashes.is_empty() && self.old_root == self.new_root
+        self.added_nodes.is_empty()
+            && self.removed_hashes.is_empty()
+            && self.old_root == self.new_root
     }
 
     /// Get statistics about this delta
@@ -391,35 +356,34 @@ impl DeltaDocument {
         }
     }
 
-    /// Serialize to JSON
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string(self)
     }
 
-    /// Serialize to pretty-printed JSON
     pub fn to_json_pretty(&self) -> serde_json::Result<String> {
         serde_json::to_string_pretty(self)
     }
 
-    /// Deserialize from JSON
     pub fn from_json(json: &str) -> serde_json::Result<Self> {
         serde_json::from_str(json)
     }
 
-    /// Serialize to MessagePack (compact binary format)
     pub fn to_msgpack(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
         rmp_serde::to_vec_named(self)
     }
 
-    /// Deserialize from MessagePack
     pub fn from_msgpack(data: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
         rmp_serde::from_slice(data)
     }
 
-    /// Serialize to compressed MessagePack (zstd compression level 3)
-    pub fn to_msgpack_compressed(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    /// Serialize to compressed MessagePack using zstd.
+    /// (default compression lvl 3)
+    pub fn to_msgpack_compressed_with_level(
+        &self,
+        level: Option<i32>,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let msgpack = self.to_msgpack()?;
-        Ok(zstd::bulk::compress(&msgpack, 3)?)
+        Ok(zstd::bulk::compress(&msgpack, level.unwrap_or(3))?)
     }
 
     /// Deserialize from compressed MessagePack
@@ -608,7 +572,7 @@ mod tests {
 
         // Verify hashes are hex strings (64 chars), not arrays
         assert!(json.contains(&root_hash.to_hex()));
-        assert!(!json.contains("[0,"));  // Should not have byte arrays
+        assert!(!json.contains("[0,")); // Should not have byte arrays
     }
 
     // Delta computation tests
@@ -1053,7 +1017,7 @@ mod tests {
         let delta = old_doc.compute_delta(&new_doc);
 
         // Test compressed serialization roundtrip
-        let compressed = delta.to_msgpack_compressed().unwrap();
+        let compressed = delta.to_msgpack_compressed_with_level(None).unwrap();
         let delta2 = DeltaDocument::from_msgpack_compressed(&compressed).unwrap();
 
         assert_eq!(delta.old_root, delta2.old_root);

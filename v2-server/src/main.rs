@@ -10,7 +10,7 @@ use v2_server::{config::Config, db::Database, handlers};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load configuration
-    let config = Config::from_file("config.json")
+    let mut config = Config::from_file("config.json")
         .or_else(|_| Config::from_file("/etc/bloggen/config.json"))
         .unwrap_or_else(|_| {
             eprintln!("Warning: Could not load config file, using defaults");
@@ -28,6 +28,12 @@ async fn main() -> anyhow::Result<()> {
                 logging: Default::default(),
             }
         });
+
+    // Allow DATABASE_URL environment variable to override config file
+    if let Ok(db_url) = std::env::var("DATABASE_URL") {
+        tracing::debug!("Overriding database URL from DATABASE_URL environment variable");
+        config.database.url = db_url;
+    }
 
     // Setup logging
     let filter = EnvFilter::try_from_default_env()

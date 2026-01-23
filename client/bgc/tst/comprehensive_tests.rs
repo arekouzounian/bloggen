@@ -1,4 +1,4 @@
-use bgc::{parse_markdown, CasDocument, MarkdownRenderer, NodeStore};
+use bgc::{CasDocument, MarkdownRenderer, NodeStore, parse_markdown};
 use std::time::Instant;
 
 /// Helper to measure and display elapsed time
@@ -43,9 +43,7 @@ This is a simple test document with **bold** and *italic* text.
     });
 
     // JSON serialization
-    let json = time_operation("Serialize to JSON", || {
-        doc.to_json().unwrap()
-    });
+    let json = time_operation("Serialize to JSON", || doc.to_json().unwrap());
     eprintln!("  JSON size: {} bytes", json.len());
 
     // JSON pretty serialization
@@ -55,19 +53,19 @@ This is a simple test document with **bold** and *italic* text.
     eprintln!("  JSON (pretty) size: {} bytes", json_pretty.len());
 
     // MessagePack serialization
-    let msgpack = time_operation("Serialize to MessagePack", || {
-        doc.to_msgpack().unwrap()
-    });
-    eprintln!("  MessagePack size: {} bytes ({:.1}% of JSON)",
+    let msgpack = time_operation("Serialize to MessagePack", || doc.to_msgpack().unwrap());
+    eprintln!(
+        "  MessagePack size: {} bytes ({:.1}% of JSON)",
         msgpack.len(),
         (msgpack.len() as f64 / json.len() as f64) * 100.0
     );
 
     // Compressed MessagePack
     let msgpack_compressed = time_operation("Serialize to MessagePack+zstd", || {
-        doc.to_msgpack_compressed().unwrap()
+        doc.to_msgpack_compressed_with_level(None).unwrap()
     });
-    eprintln!("  MessagePack+zstd size: {} bytes ({:.1}% of JSON, {:.1}% of MessagePack)",
+    eprintln!(
+        "  MessagePack+zstd size: {} bytes ({:.1}% of JSON, {:.1}% of MessagePack)",
         msgpack_compressed.len(),
         (msgpack_compressed.len() as f64 / json.len() as f64) * 100.0,
         (msgpack_compressed.len() as f64 / msgpack.len() as f64) * 100.0
@@ -109,7 +107,10 @@ This is a simple test document with **bold** and *italic* text.
     // Verify same number of nodes (or very close)
     let node_diff = (store2.len() as i32 - store.len() as i32).abs();
     eprintln!("  Node count difference after round-trip: {}", node_diff);
-    assert!(node_diff <= 2, "Node count should be similar after round-trip");
+    assert!(
+        node_diff <= 2,
+        "Node count should be similar after round-trip"
+    );
 }
 
 #[test]
@@ -226,23 +227,21 @@ This document tests various Markdown features to ensure comprehensive coverage.
         CasDocument::new(&store, root_hash).unwrap()
     });
 
-    let json = time_operation("Serialize to JSON", || {
-        doc.to_json().unwrap()
-    });
+    let json = time_operation("Serialize to JSON", || doc.to_json().unwrap());
     eprintln!("  JSON size: {} bytes", json.len());
 
-    let msgpack = time_operation("Serialize to MessagePack", || {
-        doc.to_msgpack().unwrap()
-    });
-    eprintln!("  MessagePack size: {} bytes ({:.1}% of JSON)",
+    let msgpack = time_operation("Serialize to MessagePack", || doc.to_msgpack().unwrap());
+    eprintln!(
+        "  MessagePack size: {} bytes ({:.1}% of JSON)",
         msgpack.len(),
         (msgpack.len() as f64 / json.len() as f64) * 100.0
     );
 
     let msgpack_compressed = time_operation("Serialize to MessagePack+zstd", || {
-        doc.to_msgpack_compressed().unwrap()
+        doc.to_msgpack_compressed_with_level(None).unwrap()
     });
-    eprintln!("  MessagePack+zstd size: {} bytes ({:.1}% of JSON)",
+    eprintln!(
+        "  MessagePack+zstd size: {} bytes ({:.1}% of JSON)",
         msgpack_compressed.len(),
         (msgpack_compressed.len() as f64 / json.len() as f64) * 100.0
     );
@@ -280,12 +279,17 @@ fn test_large_document_with_timing() {
     // Generate a large document programmatically
     let mut markdown = String::new();
     markdown.push_str("# Large Test Document\n\n");
-    markdown.push_str("This document contains many sections to test performance with larger files.\n\n");
+    markdown.push_str(
+        "This document contains many sections to test performance with larger files.\n\n",
+    );
 
     // Add 100 sections with various content
     for i in 0..100 {
         markdown.push_str(&format!("## Section {}\n\n", i + 1));
-        markdown.push_str(&format!("This is section {} with some **bold** and *italic* text.\n\n", i + 1));
+        markdown.push_str(&format!(
+            "This is section {} with some **bold** and *italic* text.\n\n",
+            i + 1
+        ));
 
         // Every 5th section has a code block
         if i % 5 == 0 {
@@ -312,7 +316,12 @@ fn test_large_document_with_timing() {
             markdown.push_str("| Column A | Column B | Column C |\n");
             markdown.push_str("| --- | --- | --- |\n");
             for k in 0..3 {
-                markdown.push_str(&format!("| Value {}A | Value {}B | Value {}C |\n", k + 1, k + 1, k + 1));
+                markdown.push_str(&format!(
+                    "| Value {}A | Value {}B | Value {}C |\n",
+                    k + 1,
+                    k + 1,
+                    k + 1
+                ));
             }
             markdown.push('\n');
         }
@@ -323,7 +332,11 @@ fn test_large_document_with_timing() {
     markdown.push_str("## Conclusion\n\n");
     markdown.push_str("This large document tests performance with substantial content.\n");
 
-    eprintln!("Input size: {} bytes ({:.2} KB)", markdown.len(), markdown.len() as f64 / 1024.0);
+    eprintln!(
+        "Input size: {} bytes ({:.2} KB)",
+        markdown.len(),
+        markdown.len() as f64 / 1024.0
+    );
 
     let (store, root_hash) = time_operation("Parse", || {
         let mut store = NodeStore::new();
@@ -337,33 +350,41 @@ fn test_large_document_with_timing() {
         CasDocument::new(&store, root_hash).unwrap()
     });
 
-    let json = time_operation("Serialize to JSON", || {
-        doc.to_json().unwrap()
-    });
-    eprintln!("  JSON size: {} bytes ({:.2} KB)", json.len(), json.len() as f64 / 1024.0);
+    let json = time_operation("Serialize to JSON", || doc.to_json().unwrap());
+    eprintln!(
+        "  JSON size: {} bytes ({:.2} KB)",
+        json.len(),
+        json.len() as f64 / 1024.0
+    );
 
-    let msgpack = time_operation("Serialize to MessagePack", || {
-        doc.to_msgpack().unwrap()
-    });
-    eprintln!("  MessagePack size: {} bytes ({:.2} KB, {:.1}% of JSON)",
+    let msgpack = time_operation("Serialize to MessagePack", || doc.to_msgpack().unwrap());
+    eprintln!(
+        "  MessagePack size: {} bytes ({:.2} KB, {:.1}% of JSON)",
         msgpack.len(),
         msgpack.len() as f64 / 1024.0,
         (msgpack.len() as f64 / json.len() as f64) * 100.0
     );
 
     let msgpack_compressed = time_operation("Serialize to MessagePack+zstd", || {
-        doc.to_msgpack_compressed().unwrap()
+        doc.to_msgpack_compressed_with_level(None).unwrap()
     });
-    eprintln!("  MessagePack+zstd size: {} bytes ({:.2} KB, {:.1}% of JSON)",
+    eprintln!(
+        "  MessagePack+zstd size: {} bytes ({:.2} KB, {:.1}% of JSON)",
         msgpack_compressed.len(),
         msgpack_compressed.len() as f64 / 1024.0,
         (msgpack_compressed.len() as f64 / json.len() as f64) * 100.0
     );
 
     eprintln!("\n  Size reduction summary:");
-    eprintln!("    Markdown → JSON: {:.1}x", json.len() as f64 / markdown.len() as f64);
-    eprintln!("    Markdown → MessagePack: {:.1}x", msgpack.len() as f64 / markdown.len() as f64);
-    eprintln!("    Markdown → MessagePack+zstd: {:.1}x", msgpack_compressed.len() as f64 / markdown.len() as f64);
+    eprintln!(
+        "    Markdown → JSON: {:.1}x", json.len() as f64 / markdown.len() as f64);
+
+
+    eprintln!(
+        "    Markdown → MessagePack: {:.1}x", msgpack.len() as f64 / markdown.len() as f64);
+
+    eprintln!(
+       "    Markdown → MessagePack+zstd: {:.1}x", msgpack_compressed.len() as f64 / markdown.len() as f64);
 
     let doc2 = time_operation("Deserialize from JSON", || {
         CasDocument::from_json(&json).unwrap()
@@ -385,7 +406,11 @@ fn test_large_document_with_timing() {
         let root = store.get(&root_hash).unwrap();
         renderer.render(root).unwrap()
     });
-    eprintln!("  Rendered markdown size: {} bytes ({:.2} KB)", rendered.len(), rendered.len() as f64 / 1024.0);
+    eprintln!(
+        "  Rendered markdown size: {} bytes ({:.2} KB)",
+        rendered.len(),
+        rendered.len() as f64 / 1024.0
+    );
 
     time_operation("Re-parse rendered markdown", || {
         let mut store = NodeStore::new();
@@ -425,7 +450,11 @@ fn common_function() {
         markdown.push_str(repeated_section);
     }
 
-    eprintln!("Input size: {} bytes ({:.2} KB)", markdown.len(), markdown.len() as f64 / 1024.0);
+    eprintln!(
+        "Input size: {} bytes ({:.2} KB)",
+        markdown.len(),
+        markdown.len() as f64 / 1024.0
+    );
 
     let (store, root_hash) = time_operation("Parse with deduplication", || {
         let mut store = NodeStore::new();
@@ -434,14 +463,16 @@ fn common_function() {
     });
 
     eprintln!("  Nodes created (after deduplication): {}", store.len());
-    eprintln!("  Deduplication ratio: {:.2}x (many repeated nodes deduplicated)",
+    eprintln!(
+        "  Deduplication ratio: {:.2}x (many repeated nodes deduplicated)",
         markdown.len() as f64 / store.len() as f64
     );
 
     let doc = CasDocument::new(&store, root_hash).unwrap();
-    let msgpack_compressed = doc.to_msgpack_compressed().unwrap();
+    let msgpack_compressed = doc.to_msgpack_compressed_with_level(None).unwrap();
 
-    eprintln!("  Compressed size: {} bytes ({:.1}% of input)",
+    eprintln!(
+        "  Compressed size: {} bytes ({:.1}% of input)",
         msgpack_compressed.len(),
         (msgpack_compressed.len() as f64 / markdown.len() as f64) * 100.0
     );
@@ -540,9 +571,7 @@ Read more at [BlogGen](https://example.com).
     });
 
     // Step 3: Serialize (simulating network transfer)
-    let msgpack_data = time_operation("Serialize to MessagePack", || {
-        doc.to_msgpack().unwrap()
-    });
+    let msgpack_data = time_operation("Serialize to MessagePack", || doc.to_msgpack().unwrap());
 
     eprintln!("  Serialized size: {} bytes", msgpack_data.len());
 
@@ -555,9 +584,7 @@ Read more at [BlogGen](https://example.com).
     assert_eq!(doc.nodes.len(), doc2.nodes.len());
 
     // Step 5: Convert to NodeStore (simulating FUSE read)
-    let store2 = time_operation("Convert to NodeStore", || {
-        doc2.to_store()
-    });
+    let store2 = time_operation("Convert to NodeStore", || doc2.to_store());
 
     // Step 6: Render to markdown (what FUSE would return to user)
     let rendered_markdown = time_operation("Render to Markdown", || {

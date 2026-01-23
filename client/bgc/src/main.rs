@@ -1,8 +1,10 @@
-use bgc::{fuse::BlogGenFS, parse_markdown_file, Blake3Hash, CasDocument, Client, MarkdownRenderer};
+use bgc::{
+    Blake3Hash, CasDocument, Client, MarkdownRenderer, fuse::BlogGenFS, parse_markdown_file,
+};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
-use std::fs;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct MountMetadata {
@@ -21,14 +23,17 @@ fn get_mount_metadata_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 fn get_mount_metadata_path(mount_point: &PathBuf) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let canonical = fs::canonicalize(mount_point)
-        .unwrap_or_else(|_| mount_point.clone());
+    let canonical = fs::canonicalize(mount_point).unwrap_or_else(|_| mount_point.clone());
     let hash = blake3::hash(canonical.to_string_lossy().as_bytes());
     let filename = format!("{}.yaml", hex::encode(&hash.as_bytes()[..8]));
     Ok(get_mount_metadata_dir()?.join(filename))
 }
 
-fn save_mount_metadata(mount_point: &PathBuf, server: &str, pid: u32) -> Result<(), Box<dyn std::error::Error>> {
+fn save_mount_metadata(
+    mount_point: &PathBuf,
+    server: &str,
+    pid: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
     let metadata = MountMetadata {
         pid,
         mount_point: mount_point.clone(),
@@ -225,8 +230,7 @@ enum Commands {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging (set RUST_LOG=info to see logs)
     env_logger::init();
 
@@ -260,10 +264,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Generate output
             let (output_data, format_name) = if msgpack {
                 if compress {
-                    let data = doc.to_msgpack_compressed()?;
+                    let data = doc.to_msgpack_compressed_with_level(None)?;
                     (data, "MessagePack+zstd")
                 } else {
-                    let data = doc.to_msgpack()
+                    let data = doc
+                        .to_msgpack()
                         .map_err(|e| format!("MessagePack serialization failed: {}", e))?;
                     (data, "MessagePack")
                 }
@@ -378,7 +383,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Convert document into NodeStore and get root
             let store = doc.to_store();
-            let root = store.get(&doc.root_hash)
+            let root = store
+                .get(&doc.root_hash)
                 .ok_or("Root node not found in document")?;
 
             // Render to markdown
@@ -448,10 +454,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Generate output
             let (output_data, format_name) = if msgpack {
                 if compress {
-                    let data = delta.to_msgpack_compressed()?;
+                    let data = delta.to_msgpack_compressed_with_level(None)?;
                     (data, "MessagePack+zstd")
                 } else {
-                    let data = delta.to_msgpack()
+                    let data = delta
+                        .to_msgpack()
                         .map_err(|e| format!("MessagePack serialization failed: {}", e))?;
                     (data, "MessagePack")
                 }
@@ -474,10 +481,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if stats {
                 eprintln!("✓ Delta computed successfully");
-                eprintln!("  Old file: {} ({} bytes, {} nodes)",
-                    old.display(), old_size, old_doc.nodes.len());
-                eprintln!("  New file: {} ({} bytes, {} nodes)",
-                    new.display(), new_size, new_doc.nodes.len());
+                eprintln!(
+                    "  Old file: {} ({} bytes, {} nodes)",
+                    old.display(),
+                    old_size,
+                    old_doc.nodes.len()
+                );
+                eprintln!(
+                    "  New file: {} ({} bytes, {} nodes)",
+                    new.display(),
+                    new_size,
+                    new_doc.nodes.len()
+                );
                 eprintln!("  Old root hash: {}", format_hash(delta.old_root));
                 eprintln!("  New root hash: {}", format_hash(delta.new_root));
                 eprintln!("  Nodes added: {}", delta_stats.added_count);
@@ -488,7 +503,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Calculate efficiency
                 let full_new_size = if msgpack {
                     if compress {
-                        new_doc.to_msgpack_compressed()?.len()
+                        new_doc.to_msgpack_compressed_with_level(None)?.len()
                     } else {
                         new_doc.to_msgpack()?.len()
                     }
@@ -506,7 +521,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 let efficiency = 100.0 * (1.0 - (output_size as f64 / full_new_size as f64));
-                eprintln!("  Efficiency: {:.1}% smaller than full document", efficiency);
+                eprintln!(
+                    "  Efficiency: {:.1}% smaller than full document",
+                    efficiency
+                );
             }
 
             // Write output
@@ -564,11 +582,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("  Input size: {} bytes", input_size);
             }
 
-            // Create HTTP client and upload
-            let client = Client::new(&server);
-            let response = client
-                .upload_post(&slug, title.as_deref(), doc.root_hash, doc.nodes)
-                .await?;
+            // Create tokio runtime for async operations
+            let runtime = tokio::runtime::Runtime::new()?;
+            let response = runtime.block_on(async {
+                // Create HTTP client and upload
+                let client = Client::new(&server);
+                client
+                    .upload_post(&slug, title.as_deref(), doc.root_hash, doc.nodes)
+                    .await
+            })?;
 
             if stats {
                 eprintln!("✓ Upload successful!");
@@ -593,9 +615,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("  Slug: {}", slug);
             }
 
-            // Create HTTP client and download
-            let client = Client::new(&server);
-            let response = client.download_post(&slug).await?;
+            // Create tokio runtime for async operations
+            let runtime = tokio::runtime::Runtime::new()?;
+            let response = runtime.block_on(async {
+                // Create HTTP client and download
+                let client = Client::new(&server);
+                client.download_post(&slug).await
+            })?;
 
             if stats {
                 eprintln!("✓ Download successful!");
@@ -685,23 +711,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("  Nodes removed: {}", delta_stats_local.removed_count);
             }
 
-            // Create HTTP client and send delta update
-            let client = Client::new(&server);
-            let response = client
-                .update_post_delta(
-                    &slug,
-                    delta.old_root,
-                    delta.new_root,
-                    delta.added_nodes,
-                    delta.removed_hashes,
-                )
-                .await?;
+            // Create tokio runtime for async operations
+            let runtime = tokio::runtime::Runtime::new()?;
+            let response = runtime.block_on(async {
+                // Create HTTP client and send delta update
+                let client = Client::new(&server);
+                client
+                    .update_post_delta(
+                        &slug,
+                        delta.old_root,
+                        delta.new_root,
+                        delta.added_nodes,
+                        delta.removed_hashes,
+                    )
+                    .await
+            })?;
 
             if stats {
                 eprintln!("✓ Update successful!");
                 eprintln!("  Server slug: {}", response.slug);
-                eprintln!("  Server confirmed old root: {}", format_hash(response.old_root));
-                eprintln!("  Server confirmed new root: {}", format_hash(response.new_root));
+                eprintln!(
+                    "  Server confirmed old root: {}",
+                    format_hash(response.old_root)
+                );
+                eprintln!(
+                    "  Server confirmed new root: {}",
+                    format_hash(response.new_root)
+                );
                 eprintln!("  Server nodes added: {}", response.nodes_added);
                 eprintln!("  Server nodes removed: {}", response.nodes_removed);
             } else {
@@ -736,7 +772,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("Creating mount point: {}", mount_point.display());
                     std::fs::create_dir_all(&mount_point)?;
                 } else if !mount_point.is_dir() {
-                    eprintln!("Error: Mount point is not a directory: {}", mount_point.display());
+                    eprintln!(
+                        "Error: Mount point is not a directory: {}",
+                        mount_point.display()
+                    );
                     std::process::exit(1);
                 }
 
@@ -750,12 +789,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Check if already mounted
                 if let Ok(metadata) = load_mount_metadata(&mount_point) {
                     // Check if process is still running
-                    use nix::sys::signal::{kill, Signal};
+                    use nix::sys::signal::{Signal, kill};
                     use nix::unistd::Pid;
 
                     if kill(Pid::from_raw(metadata.pid as i32), Signal::SIGCONT).is_ok() {
-                        eprintln!("Error: Mount point is already mounted (PID {})", metadata.pid);
-                        eprintln!("Use 'bgc unmount {}' to unmount first", mount_point.display());
+                        eprintln!(
+                            "Error: Mount point is already mounted (PID {})",
+                            metadata.pid
+                        );
+                        eprintln!(
+                            "Use 'bgc unmount {}' to unmount first",
+                            mount_point.display()
+                        );
                         std::process::exit(1);
                     } else {
                         // Process is dead, clean up stale metadata
@@ -766,6 +811,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Get canonical path for mount point
                 let canonical_mount_point = fs::canonicalize(&mount_point)?;
 
+                // Create log file for daemon
+                let log_dir = get_mount_metadata_dir()?;
+                let log_file_path = log_dir.join("mount.log");
+                let log_file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log_file_path)?;
+
                 // Spawn daemon process
                 let exe = std::env::current_exe()?;
                 let child = std::process::Command::new(exe)
@@ -774,9 +827,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .arg("--server")
                     .arg(&server)
                     .arg("--daemon")
+                    .env("RUST_LOG", std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()))
                     .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::from(log_file.try_clone()?))
+                    .stderr(std::process::Stdio::from(log_file))
                     .spawn()?;
 
                 let pid = child.id();
@@ -788,9 +842,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  Server: {}", server);
                 println!("  Mount point: {}", canonical_mount_point.display());
                 println!("  PID: {}", pid);
+                println!("  Log file: {}", log_file_path.display());
                 println!();
-                println!("To view logs, set RUST_LOG=info or RUST_LOG=debug and check system logs");
-                println!("To unmount: bgc unmount {}", canonical_mount_point.display());
+                println!("To view logs: tail -f {}", log_file_path.display());
+                println!(
+                    "To unmount: bgc unmount {}",
+                    canonical_mount_point.display()
+                );
 
                 Ok(())
             }
@@ -798,14 +856,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Commands::Unmount { mount_point } => {
             // Get canonical path
-            let canonical_mount_point = fs::canonicalize(&mount_point)
-                .unwrap_or_else(|_| mount_point.clone());
+            let canonical_mount_point =
+                fs::canonicalize(&mount_point).unwrap_or_else(|_| mount_point.clone());
 
             // Load metadata
-            let metadata = load_mount_metadata(&canonical_mount_point)
-                .map_err(|_| {
-                    format!("Mount point {} is not mounted by bgc", canonical_mount_point.display())
-                })?;
+            let metadata = load_mount_metadata(&canonical_mount_point).map_err(|_| {
+                format!(
+                    "Mount point {} is not mounted by bgc",
+                    canonical_mount_point.display()
+                )
+            })?;
 
             println!("Unmounting BlogGen filesystem...");
             println!("  Mount point: {}", canonical_mount_point.display());
@@ -826,12 +886,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("✓ Unmounted successfully");
 
             // Wait for process to exit (with timeout)
-            use nix::sys::signal::{kill, Signal};
+            use nix::sys::signal::{Signal, kill};
             use nix::unistd::Pid;
 
             let pid = Pid::from_raw(metadata.pid as i32);
             let mut waited = 0;
-            while waited < 50 {  // Wait up to 5 seconds
+            while waited < 50 {
+                // Wait up to 5 seconds
                 if kill(pid, Signal::SIGCONT).is_err() {
                     // Process has exited
                     break;
