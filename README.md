@@ -204,6 +204,8 @@ SERVER_PORT=8080 ./run-tests.sh --integration
 
 For more details on integration tests, see [tst/README.md](./tst/README.md).
 
+For comprehensive testing documentation, see [doc/TESTING.md](./doc/TESTING.md).
+
 ## Continuous Integration
 
 All tests are designed to run in CI environments. See [tst/README.md](./tst/README.md) for CI configuration examples. 

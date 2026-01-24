@@ -63,5 +63,5 @@ SERVER_PORT=8080 make test-e2e-full
 ## See Also
 
 - [TESTING.md](TESTING.md) - Comprehensive testing guide
-- [tst/README.md](tst/README.md) - Integration test details
-- [README.md](README.md) - Project overview
+- [tst/README.md](../tst/README.md) - Integration test details
+- [README.md](../README.md) - Project overview
