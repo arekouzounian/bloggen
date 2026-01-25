@@ -6,65 +6,59 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }: 
+  outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem(system:
       let
         pkgs = import nixpkgs {
           inherit system;
         };
-        
-        commonTools = with pkgs; [
-          git
-        ];
-
-        rustPkgs = with pkgs; [
-          rustc
-          cargo
-          clippy
-          rustfmt
-        ];
       in {
-        packages = {
-          server = pkgs.rustPlatform.buildRustPackage {
-            pname = "bloggen-server";
-            version = "0.2.0";
-            src = ./server;
-            cargoLock = {
-              lockFile = ./server/Cargo.lock;
-            };
-          };
-
-          go_client = pkgs.buildGoModule {
-            pname = "bloggen-cli";
-            version = "0.1.0";
-            src = ./cli;
-            vendorHash = null;
-          };
-        };
-
         devShells = {
           default = pkgs.mkShell {
-            buildInputs = commonTools ++ rustPkgs ++ [
-              pkgs.go
-              pkgs.nodejs_20
-            ];
-          };
+            buildInputs = with pkgs; [
+              # Rust toolchain
+              rustc
+              cargo
+              clippy
+              rustfmt
 
-          rust = pkgs.mkShell {
-            buildInputs = commonTools ++ rustPkgs ++ [
-              pkgs.openssl
-              pkgs.fuse3
-              pkgs.pkg-config
+              # Build dependencies
+              openssl
+              fuse3
+              pkg-config
+
+              # Database tools (for integration tests)
+              postgresql
+
+              # Docker (for running PostgreSQL in tests)
+              docker
+              docker-compose
+
+              # Network and process utilities (for test scripts)
+              iproute2  # provides ss command
+              psmisc    # provides fuser command
             ];
 
-            # more env vars here
+            shellHook = ''
+              echo "BlogGen development environment loaded"
+              echo ""
+              echo "Available commands:"
+              echo "  cargo test          - Run unit tests"
+              echo "  ./run-tests.sh      - Run all tests (unit + integration)"
+              echo "  ./run-tests.sh --unit        - Run only unit tests"
+              echo "  ./run-tests.sh --integration - Run only integration tests"
+              echo "  ./run-tests.sh --verbose     - Run with verbose output"
+              echo ""
+              echo "Note: Integration tests require Docker daemon to be running"
+              echo "      Run 'systemctl start docker' or equivalent for your system"
+              echo ""
+            '';
+
+            # Environment variables
             RUST_BACKTRACE = 1;
-          };
 
-          go = pkgs.mkShell {
-            buildInputs = commonTools ++ [
-              pkgs.go
-            ];
+            # Ensure Docker socket is accessible
+            DOCKER_HOST = "unix:///var/run/docker.sock";
           };
         };
       });
