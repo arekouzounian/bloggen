@@ -44,12 +44,22 @@ fi
 TEST_DIR=$(mktemp -d)
 trap "rm -rf $TEST_DIR" EXIT
 
-# Get the bgc binary path
-BGC_BIN="$REPO_ROOT/client/bgc/target/debug/bgc"
+# Get the bgc binary path (check workspace location first, then local)
+if [ -f "$REPO_ROOT/target/debug/bgc" ]; then
+    BGC_BIN="$REPO_ROOT/target/debug/bgc"
+else
+    BGC_BIN="$REPO_ROOT/client/bgc/target/debug/bgc"
+fi
 
 if [ ! -f "$BGC_BIN" ]; then
     echo -e "${YELLOW}Building bgc...${NC}"
     (cd "$REPO_ROOT/client/bgc" && cargo build)
+    # Re-check after build
+    if [ -f "$REPO_ROOT/target/debug/bgc" ]; then
+        BGC_BIN="$REPO_ROOT/target/debug/bgc"
+    else
+        BGC_BIN="$REPO_ROOT/client/bgc/target/debug/bgc"
+    fi
 fi
 
 # Helper functions
