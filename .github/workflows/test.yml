@@ -72,10 +72,10 @@ jobs:
         run: cargo build --workspace
       
       - name: Run client e2e tests
-        run: ./run-tests.sh --e2e-client
+        run: ./run-tests.sh --e2e-client --verbose
       
       - name: Run full integration tests
-        run: ./run-tests.sh --e2e-full
+        run: ./run-tests.sh --e2e-full --verbose
       
       # FUSE tests disabled in CI for now (require kernel modules)
       # - name: Run FUSE integration tests
