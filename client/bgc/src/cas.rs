@@ -1,4 +1,5 @@
 use crate::ast::{AstNode, Blake3Hash};
+use crate::error::SerializationError;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -92,6 +93,11 @@ impl NodeStore {
     /// Get all nodes in the store
     pub fn nodes(&self) -> &HashMap<Blake3Hash, AstNode> {
         &self.nodes
+    }
+
+    /// Convert the node store to a HashMap (for compatibility with bgc-ast renderer)
+    pub fn to_map(&self) -> HashMap<Blake3Hash, AstNode> {
+        self.nodes.clone()
     }
 
     /// Walk the tree starting from a root hash and collect all reachable nodes.
@@ -222,24 +228,24 @@ impl CasDocument {
         store
     }
 
-    pub fn to_json(&self) -> serde_json::Result<String> {
-        serde_json::to_string(self)
+    pub fn to_json(&self) -> Result<String, SerializationError> {
+        Ok(serde_json::to_string(self)?)
     }
 
-    pub fn to_json_pretty(&self) -> serde_json::Result<String> {
-        serde_json::to_string_pretty(self)
+    pub fn to_json_pretty(&self) -> Result<String, SerializationError> {
+        Ok(serde_json::to_string_pretty(self)?)
     }
 
-    pub fn from_json(json: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(json)
+    pub fn from_json(json: &str) -> Result<Self, SerializationError> {
+        Ok(serde_json::from_str(json)?)
     }
 
-    pub fn to_msgpack(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
-        rmp_serde::to_vec_named(self)
+    pub fn to_msgpack(&self) -> Result<Vec<u8>, SerializationError> {
+        Ok(rmp_serde::to_vec_named(self)?)
     }
 
-    pub fn from_msgpack(data: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
-        rmp_serde::from_slice(data)
+    pub fn from_msgpack(data: &[u8]) -> Result<Self, SerializationError> {
+        Ok(rmp_serde::from_slice(data)?)
     }
 
     /// compressed with zstd, level indicates the zstd compression level
@@ -247,14 +253,16 @@ impl CasDocument {
     pub fn to_msgpack_compressed_with_level(
         &self,
         level: Option<i32>,
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<u8>, SerializationError> {
         let msgpack = self.to_msgpack()?;
-        Ok(zstd::bulk::compress(&msgpack, level.unwrap_or(3))?)
+        Ok(zstd::bulk::compress(&msgpack, level.unwrap_or(3))
+            .map_err(SerializationError::Compression)?)
     }
 
     /// Deserialize from compressed MessagePack
-    pub fn from_msgpack_compressed(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-        let msgpack = zstd::bulk::decompress(data, 10_000_000)?;
+    pub fn from_msgpack_compressed(data: &[u8]) -> Result<Self, SerializationError> {
+        let msgpack =
+            zstd::bulk::decompress(data, 10_000_000).map_err(SerializationError::Compression)?;
         Ok(Self::from_msgpack(&msgpack)?)
     }
 
@@ -356,24 +364,24 @@ impl DeltaDocument {
         }
     }
 
-    pub fn to_json(&self) -> serde_json::Result<String> {
-        serde_json::to_string(self)
+    pub fn to_json(&self) -> Result<String, SerializationError> {
+        Ok(serde_json::to_string(self)?)
     }
 
-    pub fn to_json_pretty(&self) -> serde_json::Result<String> {
-        serde_json::to_string_pretty(self)
+    pub fn to_json_pretty(&self) -> Result<String, SerializationError> {
+        Ok(serde_json::to_string_pretty(self)?)
     }
 
-    pub fn from_json(json: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(json)
+    pub fn from_json(json: &str) -> Result<Self, SerializationError> {
+        Ok(serde_json::from_str(json)?)
     }
 
-    pub fn to_msgpack(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
-        rmp_serde::to_vec_named(self)
+    pub fn to_msgpack(&self) -> Result<Vec<u8>, SerializationError> {
+        Ok(rmp_serde::to_vec_named(self)?)
     }
 
-    pub fn from_msgpack(data: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
-        rmp_serde::from_slice(data)
+    pub fn from_msgpack(data: &[u8]) -> Result<Self, SerializationError> {
+        Ok(rmp_serde::from_slice(data)?)
     }
 
     /// Serialize to compressed MessagePack using zstd.

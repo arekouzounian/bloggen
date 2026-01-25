@@ -1,3 +1,5 @@
+pub mod render;
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A Blake3 hash used as a content-addressable identifier for AST nodes.

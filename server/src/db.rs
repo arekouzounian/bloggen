@@ -1,10 +1,12 @@
 use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
 use bgc_ast::{AstNode, Blake3Hash};
 use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
 use std::collections::{HashMap, HashSet};
 
 use crate::models::{Post, PostSummary, PostVersion};
+use crate::storage::NodeStore;
 
 /// Database operations for content-addressable storage
 pub struct Database {
@@ -444,4 +446,34 @@ fn row_to_version(row: PgRow) -> Result<PostVersion> {
         ast_root: Blake3Hash::new(root_array),
         created_at: row.get("created_at"),
     })
+}
+
+// Implement NodeStore trait for Database to enable rendering
+#[async_trait]
+impl NodeStore for Database {
+    async fn insert_node(&self, hash: Blake3Hash, node: &AstNode) -> crate::error::Result<()> {
+        self.insert_node(&hash, node)
+            .await
+            .map_err(|e| crate::error::AppError::Internal(e.to_string()))
+    }
+
+    async fn insert_many(&self, nodes: &HashMap<Blake3Hash, AstNode>) -> crate::error::Result<()> {
+        self.insert_nodes(nodes)
+            .await
+            .map_err(|e| crate::error::AppError::Internal(e.to_string()))
+    }
+
+    async fn get_node(&self, hash: Blake3Hash) -> crate::error::Result<Option<AstNode>> {
+        self.get_node(&hash)
+            .await
+            .map_err(|e| crate::error::AppError::Internal(e.to_string()))
+    }
+
+    async fn get_many(&self, hashes: &[Blake3Hash]) -> crate::error::Result<HashMap<Blake3Hash, AstNode>> {
+        let result_vec = self.get_nodes_batch(hashes)
+            .await
+            .map_err(|e| crate::error::AppError::Internal(e.to_string()))?;
+
+        Ok(result_vec.into_iter().collect())
+    }
 }

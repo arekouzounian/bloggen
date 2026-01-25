@@ -9,6 +9,7 @@ use std::collections::HashMap;
 pub struct Client {
     base_url: String,
     http_client: reqwest::Client,
+    use_json: bool, // Debug mode: use JSON instead of MessagePack
 }
 
 impl Client {
@@ -17,7 +18,24 @@ impl Client {
         Self {
             base_url: base_url.into(),
             http_client: reqwest::Client::new(),
+            use_json: false,
         }
+    }
+
+    /// Create a new client in JSON debug mode
+    ///
+    /// This uses JSON endpoints for easier debugging and inspection
+    pub fn new_json_debug(base_url: impl Into<String>) -> Self {
+        Self {
+            base_url: base_url.into(),
+            http_client: reqwest::Client::new(),
+            use_json: true,
+        }
+    }
+
+    /// Check if client is in JSON debug mode
+    pub fn is_json_mode(&self) -> bool {
+        self.use_json
     }
 
     /// Upload a new post to the server
@@ -28,8 +46,6 @@ impl Client {
         ast_root: Blake3Hash,
         nodes: HashMap<Blake3Hash, AstNode>,
     ) -> Result<CreatePostResponse> {
-        let url = format!("{}/posts", self.base_url);
-
         let request = CreatePostRequest {
             slug: slug.to_string(),
             title: title.map(|s| s.to_string()),
@@ -37,47 +53,108 @@ impl Client {
             nodes,
         };
 
-        let response = self
-            .http_client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send upload request")?;
+        if self.use_json {
+            // JSON debug mode
+            let url = format!("{}/posts/json", self.base_url);
+            let response = self
+                .http_client
+                .post(&url)
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send upload request (JSON)")?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Server returned error {}: {}", status, error_body);
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_body = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {}: {}", status, error_body);
+            }
+
+            response
+                .json()
+                .await
+                .context("Failed to parse upload response (JSON)")
+        } else {
+            // MessagePack mode (default)
+            let url = format!("{}/posts", self.base_url);
+            let msgpack_body = rmp_serde::to_vec_named(&request)
+                .context("Failed to serialize request to MessagePack")?;
+
+            let response = self
+                .http_client
+                .post(&url)
+                .header("Content-Type", "application/msgpack")
+                .header("Accept", "application/msgpack")
+                .body(msgpack_body)
+                .send()
+                .await
+                .context("Failed to send upload request (MessagePack)")?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_body = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {}: {}", status, error_body);
+            }
+
+            let response_bytes = response
+                .bytes()
+                .await
+                .context("Failed to read response body")?;
+            let parsed: CreatePostResponse = rmp_serde::from_slice(&response_bytes)
+                .context("Failed to parse MessagePack response")?;
+
+            Ok(parsed)
         }
-
-        response
-            .json()
-            .await
-            .context("Failed to parse upload response")
     }
 
     /// Download a post from the server by slug
     pub async fn download_post(&self, slug: &str) -> Result<CasDocumentResponse> {
-        let url = format!("{}/posts/{}/ast", self.base_url, slug);
+        if self.use_json {
+            // JSON debug mode
+            let url = format!("{}/posts/{}/ast/json", self.base_url, slug);
+            let response = self
+                .http_client
+                .get(&url)
+                .send()
+                .await
+                .context("Failed to send download request (JSON)")?;
 
-        let response = self
-            .http_client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to send download request")?;
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_body = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {}: {}", status, error_body);
+            }
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Server returned error {}: {}", status, error_body);
+            response
+                .json()
+                .await
+                .context("Failed to parse download response (JSON)")
+        } else {
+            // MessagePack mode (default)
+            let url = format!("{}/posts/{}/ast", self.base_url, slug);
+            let response = self
+                .http_client
+                .get(&url)
+                .header("Accept", "application/msgpack")
+                .send()
+                .await
+                .context("Failed to send download request (MessagePack)")?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_body = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {}: {}", status, error_body);
+            }
+
+            let response_bytes = response
+                .bytes()
+                .await
+                .context("Failed to read response body")?;
+            let parsed: CasDocumentResponse = rmp_serde::from_slice(&response_bytes)
+                .context("Failed to parse MessagePack response")?;
+
+            Ok(parsed)
         }
-
-        response
-            .json()
-            .await
-            .context("Failed to parse download response")
     }
 
     /// Update a post using delta update
@@ -89,8 +166,6 @@ impl Client {
         added_nodes: HashMap<Blake3Hash, AstNode>,
         removed_hashes: Vec<Blake3Hash>,
     ) -> Result<DeltaUpdateResponse> {
-        let url = format!("{}/posts/{}/delta", self.base_url, slug);
-
         let request = DeltaUpdateRequest {
             old_root,
             new_root,
@@ -98,47 +173,108 @@ impl Client {
             removed_hashes,
         };
 
-        let response = self
-            .http_client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send delta update request")?;
+        if self.use_json {
+            // JSON debug mode
+            let url = format!("{}/posts/{}/delta/json", self.base_url, slug);
+            let response = self
+                .http_client
+                .post(&url)
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send delta update request (JSON)")?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Server returned error {}: {}", status, error_body);
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_body = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {}: {}", status, error_body);
+            }
+
+            response
+                .json()
+                .await
+                .context("Failed to parse delta update response (JSON)")
+        } else {
+            // MessagePack mode (default)
+            let url = format!("{}/posts/{}/delta", self.base_url, slug);
+            let msgpack_body = rmp_serde::to_vec_named(&request)
+                .context("Failed to serialize request to MessagePack")?;
+
+            let response = self
+                .http_client
+                .post(&url)
+                .header("Content-Type", "application/msgpack")
+                .header("Accept", "application/msgpack")
+                .body(msgpack_body)
+                .send()
+                .await
+                .context("Failed to send delta update request (MessagePack)")?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_body = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {}: {}", status, error_body);
+            }
+
+            let response_bytes = response
+                .bytes()
+                .await
+                .context("Failed to read response body")?;
+            let parsed: DeltaUpdateResponse = rmp_serde::from_slice(&response_bytes)
+                .context("Failed to parse MessagePack response")?;
+
+            Ok(parsed)
         }
-
-        response
-            .json()
-            .await
-            .context("Failed to parse delta update response")
     }
 
     /// List all posts on the server
     pub async fn list_posts(&self) -> Result<ListPostsResponse> {
-        let url = format!("{}/posts", self.base_url);
+        if self.use_json {
+            // JSON debug mode
+            let url = format!("{}/posts/json", self.base_url);
+            let response = self
+                .http_client
+                .get(&url)
+                .send()
+                .await
+                .context("Failed to send list request (JSON)")?;
 
-        let response = self
-            .http_client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to send list request")?;
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_body = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {}: {}", status, error_body);
+            }
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Server returned error {}: {}", status, error_body);
+            response
+                .json()
+                .await
+                .context("Failed to parse list response (JSON)")
+        } else {
+            // MessagePack mode (default)
+            let url = format!("{}/posts", self.base_url);
+            let response = self
+                .http_client
+                .get(&url)
+                .header("Accept", "application/msgpack")
+                .send()
+                .await
+                .context("Failed to send list request (MessagePack)")?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_body = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {}: {}", status, error_body);
+            }
+
+            let response_bytes = response
+                .bytes()
+                .await
+                .context("Failed to read response body")?;
+            let parsed: ListPostsResponse = rmp_serde::from_slice(&response_bytes)
+                .context("Failed to parse list response")?;
+
+            Ok(parsed)
         }
-
-        response
-            .json()
-            .await
-            .context("Failed to parse list response")
     }
 
     /// Delete a post from the server
@@ -218,7 +354,7 @@ struct DeltaUpdateRequest {
     removed_hashes: Vec<Blake3Hash>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DeltaUpdateResponse {
     pub slug: String,
     #[serde(deserialize_with = "deserialize_blake3hash")]
@@ -229,7 +365,7 @@ pub struct DeltaUpdateResponse {
     pub nodes_removed: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CasDocumentResponse {
     #[serde(deserialize_with = "deserialize_blake3hash")]
     pub root_hash: Blake3Hash,
@@ -237,13 +373,13 @@ pub struct CasDocumentResponse {
     pub nodes: HashMap<Blake3Hash, AstNode>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ListPostsResponse {
     pub posts: Vec<PostSummary>,
     pub total: i64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostSummary {
     pub slug: String,
     pub title: Option<String>,
@@ -318,11 +454,20 @@ mod tests {
     #[tokio::test]
     async fn test_upload_post_success() {
         let mut server = Server::new_async().await;
+
+        // Create MessagePack response body
+        let response_data = serde_json::json!({
+            "slug": "test-post",
+            "ast_root": "0000000000000000000000000000000000000000000000000000000000000001",
+            "created_at": "2026-01-18T12:00:00Z"
+        });
+        let msgpack_body = rmp_serde::to_vec_named(&response_data).unwrap();
+
         let mock = server
             .mock("POST", "/posts")
             .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"slug":"test-post","ast_root":"0000000000000000000000000000000000000000000000000000000000000001","created_at":"2026-01-18T12:00:00Z"}"#)
+            .with_header("content-type", "application/msgpack")
+            .with_body(msgpack_body)
             .create_async()
             .await;
 
@@ -372,11 +517,19 @@ mod tests {
     #[tokio::test]
     async fn test_download_post_success() {
         let mut server = Server::new_async().await;
+
+        // Create MessagePack response body
+        let response_data = CasDocumentResponse {
+            root_hash: Blake3Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000001").unwrap(),
+            nodes: HashMap::new(),
+        };
+        let msgpack_body = rmp_serde::to_vec_named(&response_data).unwrap();
+
         let mock = server
             .mock("GET", "/posts/test-post/ast")
             .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"root_hash":"0000000000000000000000000000000000000000000000000000000000000001","nodes":{}}"#)
+            .with_header("content-type", "application/msgpack")
+            .with_body(msgpack_body)
             .create_async()
             .await;
 
@@ -408,11 +561,22 @@ mod tests {
     #[tokio::test]
     async fn test_update_post_delta_success() {
         let mut server = Server::new_async().await;
+
+        // Create MessagePack response body
+        let response_data = DeltaUpdateResponse {
+            slug: "test-post".to_string(),
+            old_root: Blake3Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000001").unwrap(),
+            new_root: Blake3Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000002").unwrap(),
+            nodes_added: 1,
+            nodes_removed: 0,
+        };
+        let msgpack_body = rmp_serde::to_vec_named(&response_data).unwrap();
+
         let mock = server
             .mock("POST", "/posts/test-post/delta")
             .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"slug":"test-post","old_root":"0000000000000000000000000000000000000000000000000000000000000001","new_root":"0000000000000000000000000000000000000000000000000000000000000002","nodes_added":1,"nodes_removed":0}"#)
+            .with_header("content-type", "application/msgpack")
+            .with_body(msgpack_body)
             .create_async()
             .await;
 
@@ -439,11 +603,19 @@ mod tests {
     #[tokio::test]
     async fn test_list_posts_success() {
         let mut server = Server::new_async().await;
+
+        // Create MessagePack response body
+        let response_data = ListPostsResponse {
+            posts: vec![],
+            total: 0,
+        };
+        let msgpack_body = rmp_serde::to_vec_named(&response_data).unwrap();
+
         let mock = server
             .mock("GET", "/posts")
             .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"posts":[],"total":0}"#)
+            .with_header("content-type", "application/msgpack")
+            .with_body(msgpack_body)
             .create_async()
             .await;
 

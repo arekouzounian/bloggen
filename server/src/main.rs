@@ -79,10 +79,18 @@ async fn main() -> anyhow::Result<()> {
     // Build application with all endpoints
     let app = Router::new()
         .route("/health", get(handlers::health))
+        // MessagePack endpoints (primary)
         .route("/posts", post(handlers::create_post))
         .route("/posts", get(handlers::list_posts))
         .route("/posts/:slug/ast", get(handlers::get_post_ast))
         .route("/posts/:slug/delta", post(handlers::update_post_delta))
+        // JSON debug endpoints (for troubleshooting)
+        .route("/posts/json", post(handlers::create_post_json))
+        .route("/posts/json", get(handlers::list_posts_json))
+        .route("/posts/:slug/ast/json", get(handlers::get_post_ast_json))
+        .route("/posts/:slug/delta/json", post(handlers::update_post_delta_json))
+        // Other endpoints (HTML, markdown, delete)
+        .route("/posts/:slug/html", get(handlers::get_post_html))
         .route("/posts/:slug/markdown", get(handlers::get_post_markdown))
         .route("/posts/:slug", delete(handlers::delete_post))
         .with_state(db);

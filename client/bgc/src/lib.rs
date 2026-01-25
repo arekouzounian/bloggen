@@ -31,6 +31,7 @@
 pub mod ast;
 pub mod cas;
 pub mod convert;
+pub mod error;
 pub mod fuse;
 pub mod http;
 pub mod render;
@@ -39,6 +40,7 @@ pub mod render;
 pub use ast::{AstNode, Blake3Hash};
 pub use cas::{CasDocument, CasNode, DeltaDocument, DeltaStats, NodeStore};
 pub use convert::parse_markdown;
+pub use error::{Error, ParseError, Result, SerializationError};
 pub use http::Client;
 pub use render::{MarkdownRenderer, RenderError};
 
@@ -51,13 +53,10 @@ pub use render::{MarkdownRenderer, RenderError};
 /// # Returns
 ///
 /// A tuple of (root_hash, node_store) or an error
-pub fn parse_markdown_file(
-    path: &std::path::Path,
-) -> Result<(Blake3Hash, NodeStore), Box<dyn std::error::Error>> {
+pub fn parse_markdown_file(path: &std::path::Path) -> Result<(Blake3Hash, NodeStore)> {
     let source = std::fs::read_to_string(path)?;
     let mut store = NodeStore::new();
-    let root_hash = parse_markdown(&source, &mut store)
-        .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+    let root_hash = parse_markdown(&source, &mut store)?;
     Ok((root_hash, store))
 }
 
@@ -68,33 +67,20 @@ pub fn parse_markdown_file(
 /// * `doc` - The CasDocument to serialize
 /// * `path` - Path to write the JSON file to
 /// * `pretty` - Whether to use pretty-printing
-pub fn write_json_file(
-    doc: &CasDocument,
-    path: &std::path::Path,
-    pretty: bool,
-) -> std::io::Result<()> {
+pub fn write_json_file(doc: &CasDocument, path: &std::path::Path, pretty: bool) -> Result<()> {
     let json = if pretty {
         doc.to_json_pretty()
     } else {
         doc.to_json()
-    }
-    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    }?;
 
-    std::fs::write(path, json)
+    std::fs::write(path, json)?;
+    Ok(())
 }
 
-pub fn write_msgpack_file(
-    doc: &CasDocument,
-    path: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let serialized = match doc.to_msgpack() {
-        Ok(ser) => ser,
-        Err(e) => return Err(Box::new(e)),
-    };
-
-    if let Err(e) = std::fs::write(path, serialized) {
-        return Err(Box::new(e));
-    }
+pub fn write_msgpack_file(doc: &CasDocument, path: &std::path::Path) -> Result<()> {
+    let serialized = doc.to_msgpack()?;
+    std::fs::write(path, serialized)?;
     Ok(())
 }
 

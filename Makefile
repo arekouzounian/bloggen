@@ -60,7 +60,7 @@ test-e2e-fuse:
 
 # Advanced test options
 test-verbose:
-	@./run-tests.sh --verbose
+	@./run-tests.sh --unit --e2e-client --e2e-full --verbose
 
 test-sequential:
 	@./run-tests.sh --unit --sequential

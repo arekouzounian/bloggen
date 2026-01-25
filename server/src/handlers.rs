@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
+    http::{header, StatusCode},
+    response::{Html, IntoResponse, Response},
     Json,
 };
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::{
     db::Database,
     models::{CasDocumentResponse, CreatePostRequest, DeltaUpdateRequest, ListPostsResponse},
-    renderer,
+    msgpack::MsgPack,
 };
 
 pub type AppState = Arc<Database>;
@@ -40,8 +40,8 @@ where
 /// POST /posts - Create a new post
 pub async fn create_post(
     State(db): State<AppState>,
-    Json(req): Json<CreatePostRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
+    MsgPack(req): MsgPack<CreatePostRequest>,
+) -> Result<MsgPack<serde_json::Value>, AppError> {
     tracing::info!("Creating post: {}", req.slug);
 
     // Insert all nodes
@@ -58,7 +58,7 @@ pub async fn create_post(
     // Create initial version
     db.create_version(post.id, &req.ast_root).await?;
 
-    Ok(Json(serde_json::json!({
+    Ok(MsgPack(serde_json::json!({
         "slug": post.slug,
         "ast_root": post.ast_root.to_hex(),
         "created_at": post.created_at.format(&time::format_description::well_known::Rfc3339)
@@ -70,7 +70,7 @@ pub async fn create_post(
 pub async fn get_post_ast(
     State(db): State<AppState>,
     Path(slug): Path<String>,
-) -> Result<Json<CasDocumentResponse>, AppError> {
+) -> Result<MsgPack<CasDocumentResponse>, AppError> {
     tracing::info!("Getting AST for post: {}", slug);
 
     let post = db
@@ -80,18 +80,35 @@ pub async fn get_post_ast(
 
     let nodes = db.walk_tree(&post.ast_root).await?;
 
-    Ok(Json(CasDocumentResponse {
+    Ok(MsgPack(CasDocumentResponse {
         root_hash: post.ast_root,
         nodes,
     }))
+}
+
+/// GET /posts/:slug/html - Render post to HTML
+pub async fn get_post_html(
+    State(db): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Html<String>, AppError> {
+    tracing::info!("Rendering post to HTML: {}", slug);
+
+    let post = db
+        .get_post(&slug)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Post not found"))?;
+
+    let html = crate::render::html::render_to_html(post.ast_root, db.as_ref()).await?;
+
+    Ok(Html(html))
 }
 
 /// POST /posts/:slug/delta - Update post via delta
 pub async fn update_post_delta(
     State(db): State<AppState>,
     Path(slug): Path<String>,
-    Json(req): Json<DeltaUpdateRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
+    MsgPack(req): MsgPack<DeltaUpdateRequest>,
+) -> Result<MsgPack<serde_json::Value>, AppError> {
     tracing::info!("Applying delta to post: {}", slug);
 
     // Get current post
@@ -115,7 +132,8 @@ pub async fn update_post_delta(
 
     // Update reference counts using smart delta
     // This only updates nodes that changed, not the entire tree
-    db.update_tree_refs_delta(&req.old_root, &req.new_root).await?;
+    db.update_tree_refs_delta(&req.old_root, &req.new_root)
+        .await?;
 
     // Update post root
     let updated = db
@@ -129,7 +147,7 @@ pub async fn update_post_delta(
     // Create version snapshot
     db.create_version(post.id, &req.new_root).await?;
 
-    Ok(Json(serde_json::json!({
+    Ok(MsgPack(serde_json::json!({
         "slug": slug,
         "old_root": req.old_root.to_hex(),
         "new_root": req.new_root.to_hex(),
@@ -142,29 +160,30 @@ pub async fn update_post_delta(
 pub async fn get_post_markdown(
     State(db): State<AppState>,
     Path(slug): Path<String>,
-) -> Result<String, AppError> {
-    tracing::info!("Rendering markdown for post: {}", slug);
+) -> Result<impl IntoResponse, AppError> {
+    tracing::info!("Rendering post to markdown: {}", slug);
 
     let post = db
         .get_post(&slug)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Post not found"))?;
 
-    let nodes = db.walk_tree(&post.ast_root).await?;
+    let markdown = crate::render::markdown::render_to_markdown(post.ast_root, db.as_ref()).await?;
 
-    let markdown = renderer::render_to_markdown(&post.ast_root, &nodes)?;
-
-    Ok(markdown)
+    Ok((
+        [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+        markdown,
+    ))
 }
 
 /// GET /posts - List all posts
-pub async fn list_posts(State(db): State<AppState>) -> Result<Json<ListPostsResponse>, AppError> {
+pub async fn list_posts(State(db): State<AppState>) -> Result<MsgPack<ListPostsResponse>, AppError> {
     tracing::info!("Listing all posts");
 
     let posts = db.list_posts().await?;
     let total = posts.len() as i64;
 
-    Ok(Json(ListPostsResponse { posts, total }))
+    Ok(MsgPack(ListPostsResponse { posts, total }))
 }
 
 /// DELETE /posts/:slug - Delete a post
@@ -191,4 +210,118 @@ pub async fn delete_post(
 /// Health check endpoint
 pub async fn health() -> &'static str {
     "OK"
+}
+
+// JSON debug endpoints - these mirror the MessagePack endpoints for debugging
+
+/// POST /posts/json - Create a new post (JSON debug endpoint)
+pub async fn create_post_json(
+    State(db): State<AppState>,
+    Json(req): Json<CreatePostRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    tracing::info!("Creating post (JSON): {}", req.slug);
+
+    // Insert all nodes
+    db.insert_nodes(&req.nodes).await?;
+
+    // Increment ref counts for the tree
+    db.increment_tree_refs(&req.ast_root).await?;
+
+    // Create the post
+    let post = db
+        .create_post(&req.slug, req.title.as_deref(), &req.ast_root)
+        .await?;
+
+    // Create initial version
+    db.create_version(post.id, &req.ast_root).await?;
+
+    Ok(Json(serde_json::json!({
+        "slug": post.slug,
+        "ast_root": post.ast_root.to_hex(),
+        "created_at": post.created_at.format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| post.created_at.to_string()),
+    })))
+}
+
+/// GET /posts/:slug/ast/json - Get AST for a post (JSON debug endpoint)
+pub async fn get_post_ast_json(
+    State(db): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<CasDocumentResponse>, AppError> {
+    tracing::info!("Getting AST for post (JSON): {}", slug);
+
+    let post = db
+        .get_post(&slug)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Post not found"))?;
+
+    let nodes = db.walk_tree(&post.ast_root).await?;
+
+    Ok(Json(CasDocumentResponse {
+        root_hash: post.ast_root,
+        nodes,
+    }))
+}
+
+/// POST /posts/:slug/delta/json - Update post via delta (JSON debug endpoint)
+pub async fn update_post_delta_json(
+    State(db): State<AppState>,
+    Path(slug): Path<String>,
+    Json(req): Json<DeltaUpdateRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    tracing::info!("Applying delta to post (JSON): {}", slug);
+
+    // Get current post
+    let post = db
+        .get_post(&slug)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Post not found"))?;
+
+    // Verify old_root matches
+    if post.ast_root != req.old_root {
+        return Err(anyhow::anyhow!(
+            "Conflict: old_root mismatch (expected {}, got {})",
+            post.ast_root.to_hex(),
+            req.old_root.to_hex()
+        )
+        .into());
+    }
+
+    // Insert new nodes
+    db.insert_nodes(&req.added_nodes).await?;
+
+    // Update reference counts using smart delta
+    // This only updates nodes that changed, not the entire tree
+    db.update_tree_refs_delta(&req.old_root, &req.new_root)
+        .await?;
+
+    // Update post root
+    let updated = db
+        .update_post_root(&slug, &req.old_root, &req.new_root)
+        .await?;
+
+    if !updated {
+        return Err(anyhow::anyhow!("Failed to update post (concurrent modification?)").into());
+    }
+
+    // Create version snapshot
+    db.create_version(post.id, &req.new_root).await?;
+
+    Ok(Json(serde_json::json!({
+        "slug": slug,
+        "old_root": req.old_root.to_hex(),
+        "new_root": req.new_root.to_hex(),
+        "nodes_added": req.added_nodes.len(),
+        "nodes_removed": req.removed_hashes.len(),
+    })))
+}
+
+/// GET /posts/json - List all posts (JSON debug endpoint)
+pub async fn list_posts_json(State(db): State<AppState>) -> Result<Json<ListPostsResponse>, AppError> {
+    tracing::info!("Listing all posts (JSON)");
+
+    let posts = db.list_posts().await?;
+    let total = posts.len() as i64;
+
+    Ok(Json(ListPostsResponse { posts, total }))
 }

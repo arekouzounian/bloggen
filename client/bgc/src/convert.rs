@@ -1,5 +1,6 @@
 use crate::ast::{AstNode, Blake3Hash};
 use crate::cas::NodeStore;
+use crate::error::ParseError;
 use markdown::mdast;
 
 /// Convert a markdown-rs AST node to our owned AstNode representation.
@@ -249,7 +250,7 @@ fn convert_children(children: &[mdast::Node], store: &mut NodeStore) -> Vec<Blak
 /// # Returns
 ///
 /// The hash of the root node, or an error if parsing fails
-pub fn parse_markdown(source: &str, store: &mut NodeStore) -> Result<Blake3Hash, String> {
+pub fn parse_markdown(source: &str, store: &mut NodeStore) -> Result<Blake3Hash, ParseError> {
     // Create ParseOptions with GFM + frontmatter + math support
     let mut options = markdown::ParseOptions::gfm();
     options.constructs.frontmatter = true;
@@ -260,7 +261,7 @@ pub fn parse_markdown(source: &str, store: &mut NodeStore) -> Result<Blake3Hash,
 
     // Parse markdown to markdown AST
     let md_ast = markdown::to_mdast(source, &options)
-        .map_err(|e| format!("Failed to parse markdown: {}", e))?;
+        .map_err(|e| ParseError::new(format!("Failed to parse markdown: {}", e)))?;
 
     // Convert to our owned AST and store in the NodeStore
     let root_node = convert_node(&md_ast, store);

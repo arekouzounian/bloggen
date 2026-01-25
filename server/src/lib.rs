@@ -3,8 +3,8 @@ pub mod db;
 pub mod error;
 pub mod handlers;
 pub mod models;
+pub mod msgpack;
 pub mod render;
-pub mod renderer;
 pub mod storage;
 
 // Re-export shared AST types

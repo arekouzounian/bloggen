@@ -1,41 +1,11 @@
 //! AST → Markdown renderer
 //!
-//! Converts content-addressed AST nodes back to markdown text using a visitor pattern.
-//!
-//! Design principles:
-//! - ATX headings (`## Heading`) over Setext style
-//! - Consistent `**bold**` and `*italic*` formatting
-//! - 2-space list indentation
-//! - Blank lines between block elements
-//! - Deterministic output (same AST always produces same markdown)
+//! This module provides a wrapper around the shared bgc-ast markdown renderer,
+//! adapting it to work with the server's NodeStore trait and async interfaces.
 
 use crate::error::AppError;
 use crate::storage::NodeStore;
-use bgc_ast::{AstNode, Blake3Hash, ReferenceKind};
-use std::collections::HashMap;
-
-/// Rendering context to track state during traversal
-#[derive(Debug, Clone)]
-struct RenderContext {
-    /// Current list nesting depth (for proper indentation)
-    list_depth: usize,
-    /// Whether we're inside an inline context (no newlines)
-    /// Currently unused but reserved for future inline/block handling
-    _inline: bool,
-    /// Whether we're at the start of a line (affects spacing)
-    /// Currently unused but reserved for future whitespace handling
-    _at_line_start: bool,
-}
-
-impl Default for RenderContext {
-    fn default() -> Self {
-        Self {
-            list_depth: 0,
-            _inline: false,
-            _at_line_start: true,
-        }
-    }
-}
+use bgc_ast::Blake3Hash;
 
 /// Render a content-addressed AST to markdown text.
 ///
@@ -57,455 +27,22 @@ pub async fn render_to_markdown<S: NodeStore>(
     // Fetch the entire tree upfront
     let nodes = crate::storage::walker::walk_tree(root_hash, store).await?;
 
-    // Start rendering from the root
-    let mut output = String::new();
-    let ctx = RenderContext::default();
-    render_node(root_hash, &nodes, &ctx, &mut output)?;
+    // Convert to the format expected by bgc-ast renderer
+    let root_node = nodes
+        .get(&root_hash)
+        .ok_or_else(|| AppError::Internal(format!("Missing root node: {}", root_hash.to_hex())))?;
 
-    Ok(output)
-}
-
-/// Recursively render a single node and its children
-fn render_node(
-    hash: Blake3Hash,
-    nodes: &HashMap<Blake3Hash, AstNode>,
-    ctx: &RenderContext,
-    output: &mut String,
-) -> Result<(), AppError> {
-    let node = nodes.get(&hash).ok_or_else(|| {
-        AppError::Internal(format!("Missing node during rendering: {}", hash.to_hex()))
-    })?;
-
-    match node {
-        AstNode::Root { children } => {
-            render_children(children, nodes, ctx, output)?;
-        }
-
-        AstNode::Heading { level, children } => {
-            ensure_blank_line_before(output);
-            let level = (*level).clamp(1, 6);
-            output.push_str(&"#".repeat(level as usize));
-            output.push(' ');
-
-            let inline_ctx = RenderContext {
-                _inline: true,
-                _at_line_start: false,
-                ..*ctx
-            };
-            render_children(children, nodes, &inline_ctx, output)?;
-            output.push('\n');
-        }
-
-        AstNode::Paragraph { children } => {
-            ensure_blank_line_before(output);
-            let inline_ctx = RenderContext {
-                _inline: true,
-                _at_line_start: true,
-                ..*ctx
-            };
-            render_children(children, nodes, &inline_ctx, output)?;
-            output.push('\n');
-        }
-
-        AstNode::List {
-            ordered,
-            start,
-            children,
-        } => {
-            ensure_blank_line_before(output);
-            let list_ctx = RenderContext {
-                list_depth: ctx.list_depth + 1,
-                ..*ctx
-            };
-
-            for (i, child_hash) in children.iter().enumerate() {
-                let indent = "  ".repeat(ctx.list_depth);
-                output.push_str(&indent);
-
-                if *ordered {
-                    let num = start.unwrap_or(1) + i as u32;
-                    output.push_str(&format!("{}. ", num));
-                } else {
-                    output.push_str("- ");
-                }
-
-                render_node(*child_hash, nodes, &list_ctx, output)?;
-            }
-        }
-
-        AstNode::ListItem { checked, children } => {
-            // Checkbox for task lists
-            if let Some(is_checked) = checked {
-                if *is_checked {
-                    output.push_str("[x] ");
-                } else {
-                    output.push_str("[ ] ");
-                }
-            }
-
-            let item_ctx = RenderContext {
-                _inline: true,
-                _at_line_start: false,
-                ..*ctx
-            };
-            render_children(children, nodes, &item_ctx, output)?;
-            output.push('\n');
-        }
-
-        AstNode::Blockquote { children } => {
-            ensure_blank_line_before(output);
-            // Render children to a temporary buffer
-            let mut inner = String::new();
-            render_children(children, nodes, ctx, &mut inner)?;
-
-            // Prefix each line with "> "
-            for line in inner.lines() {
-                output.push_str("> ");
-                output.push_str(line);
-                output.push('\n');
-            }
-        }
-
-        AstNode::Strong { children } => {
-            output.push_str("**");
-            render_children(children, nodes, ctx, output)?;
-            output.push_str("**");
-        }
-
-        AstNode::Emphasis { children } => {
-            output.push('*');
-            render_children(children, nodes, ctx, output)?;
-            output.push('*');
-        }
-
-        AstNode::Delete { children } => {
-            output.push_str("~~");
-            render_children(children, nodes, ctx, output)?;
-            output.push_str("~~");
-        }
-
-        AstNode::Text { value } => {
-            output.push_str(value);
-        }
-
-        AstNode::CodeBlock { lang, value } => {
-            ensure_blank_line_before(output);
-            output.push_str("```");
-            if let Some(language) = lang {
-                output.push_str(language);
-            }
-            output.push('\n');
-            output.push_str(value);
-            if !value.ends_with('\n') {
-                output.push('\n');
-            }
-            output.push_str("```\n");
-        }
-
-        AstNode::InlineCode { value } => {
-            output.push('`');
-            output.push_str(value);
-            output.push('`');
-        }
-
-        AstNode::Link {
-            url,
-            title,
-            children,
-        } => {
-            output.push('[');
-            render_children(children, nodes, ctx, output)?;
-            output.push_str("](");
-            output.push_str(url);
-            if let Some(t) = title {
-                output.push_str(" \"");
-                output.push_str(&escape_quotes(t));
-                output.push('"');
-            }
-            output.push(')');
-        }
-
-        AstNode::Image { url, alt, title } => {
-            output.push_str("![");
-            output.push_str(alt);
-            output.push_str("](");
-            output.push_str(url);
-            if let Some(t) = title {
-                output.push_str(" \"");
-                output.push_str(&escape_quotes(t));
-                output.push('"');
-            }
-            output.push(')');
-        }
-
-        AstNode::Break => {
-            output.push_str("  \n");
-        }
-
-        AstNode::ThematicBreak => {
-            ensure_blank_line_before(output);
-            output.push_str("---\n");
-        }
-
-        AstNode::Table { children } => {
-            ensure_blank_line_before(output);
-            render_children(children, nodes, ctx, output)?;
-        }
-
-        AstNode::TableRow { children } => {
-            output.push('|');
-            for child_hash in children {
-                output.push(' ');
-                render_node(*child_hash, nodes, ctx, output)?;
-                output.push_str(" |");
-            }
-            output.push('\n');
-        }
-
-        AstNode::TableCell { children } => {
-            let inline_ctx = RenderContext {
-                _inline: true,
-                ..*ctx
-            };
-            render_children(children, nodes, &inline_ctx, output)?;
-        }
-
-        AstNode::Html { value } => {
-            ensure_blank_line_before(output);
-            output.push_str(value);
-            output.push('\n');
-        }
-
-        AstNode::Definition {
-            identifier,
-            url,
-            title,
-            ..
-        } => {
-            ensure_blank_line_before(output);
-            output.push('[');
-            output.push_str(identifier);
-            output.push_str("]: ");
-            output.push_str(url);
-            if let Some(t) = title {
-                output.push_str(" \"");
-                output.push_str(&escape_quotes(t));
-                output.push('"');
-            }
-            output.push('\n');
-        }
-
-        AstNode::LinkReference {
-            reference_kind,
-            identifier,
-            label,
-            children,
-        } => {
-            output.push('[');
-            render_children(children, nodes, ctx, output)?;
-            output.push(']');
-
-            match reference_kind {
-                ReferenceKind::Full => {
-                    output.push('[');
-                    if let Some(l) = label {
-                        output.push_str(l);
-                    } else {
-                        output.push_str(identifier);
-                    }
-                    output.push(']');
-                }
-                ReferenceKind::Collapsed => {
-                    output.push_str("[]");
-                }
-                ReferenceKind::Shortcut => {
-                    // No additional syntax needed
-                }
-            }
-        }
-
-        AstNode::ImageReference {
-            reference_kind,
-            identifier,
-            label,
-            alt,
-        } => {
-            output.push_str("![");
-            output.push_str(alt);
-            output.push(']');
-
-            match reference_kind {
-                ReferenceKind::Full => {
-                    output.push('[');
-                    if let Some(l) = label {
-                        output.push_str(l);
-                    } else {
-                        output.push_str(identifier);
-                    }
-                    output.push(']');
-                }
-                ReferenceKind::Collapsed => {
-                    output.push_str("[]");
-                }
-                ReferenceKind::Shortcut => {
-                    // No additional syntax needed
-                }
-            }
-        }
-
-        AstNode::Yaml { value } => {
-            output.push_str("---\n");
-            output.push_str(value);
-            if !value.ends_with('\n') {
-                output.push('\n');
-            }
-            output.push_str("---\n");
-        }
-
-        AstNode::Toml { value } => {
-            output.push_str("+++\n");
-            output.push_str(value);
-            if !value.ends_with('\n') {
-                output.push('\n');
-            }
-            output.push_str("+++\n");
-        }
-
-        AstNode::FootnoteDefinition {
-            identifier,
-            children,
-            ..
-        } => {
-            ensure_blank_line_before(output);
-            output.push_str("[^");
-            output.push_str(identifier);
-            output.push_str("]: ");
-            render_children(children, nodes, ctx, output)?;
-            output.push('\n');
-        }
-
-        AstNode::FootnoteReference { identifier, .. } => {
-            output.push_str("[^");
-            output.push_str(identifier);
-            output.push(']');
-        }
-
-        AstNode::Math { value } => {
-            ensure_blank_line_before(output);
-            output.push_str("$$\n");
-            output.push_str(value);
-            if !value.ends_with('\n') {
-                output.push('\n');
-            }
-            output.push_str("$$\n");
-        }
-
-        AstNode::InlineMath { value } => {
-            output.push('$');
-            output.push_str(value);
-            output.push('$');
-        }
-
-        AstNode::MdxjsEsm { value } => {
-            ensure_blank_line_before(output);
-            output.push_str(value);
-            output.push('\n');
-        }
-
-        AstNode::MdxFlowExpression { value } => {
-            ensure_blank_line_before(output);
-            output.push('{');
-            output.push_str(value);
-            output.push('}');
-            output.push('\n');
-        }
-
-        AstNode::MdxTextExpression { value } => {
-            output.push('{');
-            output.push_str(value);
-            output.push('}');
-        }
-
-        AstNode::MdxJsxFlowElement { name, children } => {
-            ensure_blank_line_before(output);
-            if let Some(tag_name) = name {
-                output.push('<');
-                output.push_str(tag_name);
-                output.push('>');
-                render_children(children, nodes, ctx, output)?;
-                output.push_str("</");
-                output.push_str(tag_name);
-                output.push('>');
-            } else {
-                // Fragment
-                output.push_str("<>");
-                render_children(children, nodes, ctx, output)?;
-                output.push_str("</>");
-            }
-            output.push('\n');
-        }
-
-        AstNode::MdxJsxTextElement { name, children } => {
-            if let Some(tag_name) = name {
-                output.push('<');
-                output.push_str(tag_name);
-                output.push('>');
-                render_children(children, nodes, ctx, output)?;
-                output.push_str("</");
-                output.push_str(tag_name);
-                output.push('>');
-            } else {
-                // Fragment
-                output.push_str("<>");
-                render_children(children, nodes, ctx, output)?;
-                output.push_str("</>");
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Render multiple child nodes in sequence
-fn render_children(
-    children: &[Blake3Hash],
-    nodes: &HashMap<Blake3Hash, AstNode>,
-    ctx: &RenderContext,
-    output: &mut String,
-) -> Result<(), AppError> {
-    for child_hash in children {
-        render_node(*child_hash, nodes, ctx, output)?;
-    }
-    Ok(())
-}
-
-/// Ensure there's a blank line before block-level elements (if output is not empty)
-fn ensure_blank_line_before(output: &mut String) {
-    if output.is_empty() {
-        return;
-    }
-
-    // Check if we already have a blank line
-    if output.ends_with("\n\n") {
-        return;
-    }
-
-    // Add appropriate newlines
-    if output.ends_with('\n') {
-        output.push('\n');
-    } else {
-        output.push_str("\n\n");
-    }
-}
-
-/// Escape double quotes in title attributes
-fn escape_quotes(s: &str) -> String {
-    s.replace('"', "\\\"")
+    // Use the shared renderer from bgc-ast
+    let mut renderer = bgc_ast::render::MarkdownRenderer::new(&nodes);
+    renderer
+        .render(root_node)
+        .map_err(|e| AppError::Internal(format!("Render error: {}", e)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bgc_ast::AstNode;
     use std::collections::HashMap;
 
     /// Mock in-memory node store for testing
@@ -711,5 +248,130 @@ mod tests {
         let markdown = render_to_markdown(root_hash, &store).await.unwrap();
         assert!(markdown.contains("- First item"));
         assert!(markdown.contains("- Second item"));
+    }
+
+    #[tokio::test]
+    async fn test_render_table() {
+        let mut store = MockNodeStore::new();
+
+        // Header cells
+        let h1_text = AstNode::Text {
+            value: "Name".to_string(),
+        };
+        let h1_text_hash = hash_node(&h1_text);
+        store.insert(h1_text_hash, h1_text);
+
+        let h1_cell = AstNode::TableCell {
+            children: vec![h1_text_hash],
+        };
+        let h1_cell_hash = hash_node(&h1_cell);
+        store.insert(h1_cell_hash, h1_cell);
+
+        let h2_text = AstNode::Text {
+            value: "Age".to_string(),
+        };
+        let h2_text_hash = hash_node(&h2_text);
+        store.insert(h2_text_hash, h2_text);
+
+        let h2_cell = AstNode::TableCell {
+            children: vec![h2_text_hash],
+        };
+        let h2_cell_hash = hash_node(&h2_cell);
+        store.insert(h2_cell_hash, h2_cell);
+
+        // Header row
+        let header_row = AstNode::TableRow {
+            children: vec![h1_cell_hash, h2_cell_hash],
+        };
+        let header_row_hash = hash_node(&header_row);
+        store.insert(header_row_hash, header_row);
+
+        // Data cells
+        let d1_text = AstNode::Text {
+            value: "Alice".to_string(),
+        };
+        let d1_text_hash = hash_node(&d1_text);
+        store.insert(d1_text_hash, d1_text);
+
+        let d1_cell = AstNode::TableCell {
+            children: vec![d1_text_hash],
+        };
+        let d1_cell_hash = hash_node(&d1_cell);
+        store.insert(d1_cell_hash, d1_cell);
+
+        let d2_text = AstNode::Text {
+            value: "30".to_string(),
+        };
+        let d2_text_hash = hash_node(&d2_text);
+        store.insert(d2_text_hash, d2_text);
+
+        let d2_cell = AstNode::TableCell {
+            children: vec![d2_text_hash],
+        };
+        let d2_cell_hash = hash_node(&d2_cell);
+        store.insert(d2_cell_hash, d2_cell);
+
+        // Data row
+        let data_row = AstNode::TableRow {
+            children: vec![d1_cell_hash, d2_cell_hash],
+        };
+        let data_row_hash = hash_node(&data_row);
+        store.insert(data_row_hash, data_row);
+
+        // Table
+        let table = AstNode::Table {
+            children: vec![header_row_hash, data_row_hash],
+        };
+        let table_hash = hash_node(&table);
+        store.insert(table_hash, table);
+
+        let root = AstNode::Root {
+            children: vec![table_hash],
+        };
+        let root_hash = hash_node(&root);
+        store.insert(root_hash, root);
+
+        let markdown = render_to_markdown(root_hash, &store).await.unwrap();
+
+        // Verify table separator row is present (this was broken in the old server implementation)
+        assert!(markdown.contains("| Name | Age |"));
+        assert!(markdown.contains("| --- | --- |"));
+        assert!(markdown.contains("| Alice | 30 |"));
+    }
+
+    #[tokio::test]
+    async fn test_render_quote_escaping() {
+        let mut store = MockNodeStore::new();
+
+        let text = AstNode::Text {
+            value: "link text".to_string(),
+        };
+        let text_hash = hash_node(&text);
+        store.insert(text_hash, text);
+
+        let link = AstNode::Link {
+            url: "https://example.com".to_string(),
+            title: Some("Title with \"quotes\"".to_string()),
+            children: vec![text_hash],
+        };
+        let link_hash = hash_node(&link);
+        store.insert(link_hash, link);
+
+        let para = AstNode::Paragraph {
+            children: vec![link_hash],
+        };
+        let para_hash = hash_node(&para);
+        store.insert(para_hash, para);
+
+        let root = AstNode::Root {
+            children: vec![para_hash],
+        };
+        let root_hash = hash_node(&root);
+        store.insert(root_hash, root);
+
+        let markdown = render_to_markdown(root_hash, &store).await.unwrap();
+
+        // Verify quotes are properly escaped (this was missing in the old server implementation)
+        assert!(markdown.contains(r#"Title with \"quotes\""#));
     }
 }
