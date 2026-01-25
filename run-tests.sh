@@ -178,11 +178,11 @@ if [ "$RUN_E2E_CLIENT" = true ] || [ "$RUN_E2E_FULL" = true ] || [ "$RUN_E2E_FUS
 fi
 
 # Check if we're in the bloggen root directory
-if [ ! -d "client/bgc" ] || [ ! -d "v2-server" ]; then
+if [ ! -d "client/bgc" ] || [ ! -d "server" ]; then
     echo -e "${RED}Error: Must run from bloggen repository root${NC}"
     echo "Expected directory structure:"
     echo "  ./client/bgc/     - BlogGen client"
-    echo "  ./v2-server/      - BlogGen v2 server"
+    echo "  ./server/         - BlogGen server"
     exit 1
 fi
 
@@ -229,14 +229,14 @@ fi
 
 if [ "$RUN_UNIT" = true ]; then
     print_header "Phase 1: Unit Tests"
-    
+
     if [ "$PARALLEL" = true ]; then
         print_section "Running client and server unit tests in parallel..."
-        
+
         # Create temp directory for logs
         TEST_LOGS=$(mktemp -d)
         trap "rm -rf $TEST_LOGS" EXIT
-        
+
         # Run client tests in background
         (
             cd "$REPO_ROOT/client/bgc"
@@ -248,10 +248,10 @@ if [ "$RUN_UNIT" = true ]; then
             echo $? > "$TEST_LOGS/client.exit"
         ) &
         CLIENT_PID=$!
-        
+
         # Run server tests in background
         (
-            cd "$REPO_ROOT/v2-server"
+            cd "$REPO_ROOT/server"
             if [ "$VERBOSE" = true ]; then
                 cargo test 2>&1 | tee "$TEST_LOGS/server.log"
             else
@@ -260,15 +260,15 @@ if [ "$RUN_UNIT" = true ]; then
             echo $? > "$TEST_LOGS/server.exit"
         ) &
         SERVER_PID=$!
-        
+
         # Wait for both to complete
         wait $CLIENT_PID
         wait $SERVER_PID
-        
+
         # Check results
         CLIENT_EXIT=$(cat "$TEST_LOGS/client.exit")
         SERVER_EXIT=$(cat "$TEST_LOGS/server.exit")
-        
+
         echo ""
         if [ "$CLIENT_EXIT" -eq 0 ]; then
             CLIENT_TESTS=$(grep "test result:" "$TEST_LOGS/client.log" | head -1 | sed 's/test result: ok. //' | sed 's/ passed;.*//')
@@ -280,7 +280,7 @@ if [ "$RUN_UNIT" = true ]; then
                 tail -50 "$TEST_LOGS/client.log"
             fi
         fi
-        
+
         if [ "$SERVER_EXIT" -eq 0 ]; then
             SERVER_TESTS=$(grep "test result:" "$TEST_LOGS/server.log" | head -1 | sed 's/test result: ok. //' | sed 's/ passed;.*//')
             print_success "Server tests passed ($SERVER_TESTS tests)"
@@ -291,7 +291,7 @@ if [ "$RUN_UNIT" = true ]; then
                 tail -50 "$TEST_LOGS/server.log"
             fi
         fi
-        
+
         if [ "$CLIENT_EXIT" -eq 0 ] && [ "$SERVER_EXIT" -eq 0 ]; then
             UNIT_TESTS_PASSED=true
         else
@@ -307,23 +307,23 @@ if [ "$RUN_UNIT" = true ]; then
             cargo test --quiet
         fi
         CLIENT_EXIT=$?
-        
+
         if [ "$CLIENT_EXIT" -eq 0 ]; then
             print_success "Client tests passed"
         else
             print_error "Client tests failed"
             exit 1
         fi
-        
+
         print_section "Running server unit tests..."
-        cd "$REPO_ROOT/v2-server"
+        cd "$REPO_ROOT/server"
         if [ "$VERBOSE" = true ]; then
             cargo test
         else
             cargo test --quiet
         fi
         SERVER_EXIT=$?
-        
+
         if [ "$SERVER_EXIT" -eq 0 ]; then
             print_success "Server tests passed"
             UNIT_TESTS_PASSED=true
@@ -341,15 +341,15 @@ fi
 
 if [ "$RUN_INTEGRATION" = true ]; then
     print_header "Phase 2: Integration Tests"
-    
+
     cd "$REPO_ROOT"
-    
+
     # Determine which integration tests to run
     RUN_ALL_E2E=false
     if [ "$RUN_E2E_CLIENT" = false ] && [ "$RUN_E2E_FULL" = false ] && [ "$RUN_E2E_FUSE" = false ]; then
         RUN_ALL_E2E=true
     fi
-    
+
     # Run e2e-client
     if [ "$RUN_ALL_E2E" = true ] || [ "$RUN_E2E_CLIENT" = true ]; then
         print_section "Running client e2e tests..."
@@ -358,7 +358,7 @@ if [ "$RUN_INTEGRATION" = true ]; then
         else
             ./tst/e2e-client.sh > /dev/null 2>&1
         fi
-        
+
         if [ $? -eq 0 ]; then
             print_success "Client e2e tests passed"
             E2E_CLIENT_PASSED=true
@@ -370,7 +370,7 @@ if [ "$RUN_INTEGRATION" = true ]; then
             fi
         fi
     fi
-    
+
     # Run e2e-full
     if [ "$RUN_ALL_E2E" = true ] || [ "$RUN_E2E_FULL" = true ]; then
         print_section "Running full integration tests..."
@@ -379,7 +379,7 @@ if [ "$RUN_INTEGRATION" = true ]; then
         else
             ./tst/e2e-full.sh > /dev/null 2>&1
         fi
-        
+
         if [ $? -eq 0 ]; then
             print_success "Full integration tests passed"
             E2E_FULL_PASSED=true
@@ -391,7 +391,7 @@ if [ "$RUN_INTEGRATION" = true ]; then
             fi
         fi
     fi
-    
+
     # Run e2e-fuse
     if [ "$RUN_ALL_E2E" = true ] || [ "$RUN_E2E_FUSE" = true ]; then
         print_section "Running FUSE integration tests..."
@@ -400,7 +400,7 @@ if [ "$RUN_INTEGRATION" = true ]; then
         else
             ./tst/e2e-fuse.sh > /dev/null 2>&1
         fi
-        
+
         if [ $? -eq 0 ]; then
             print_success "FUSE integration tests passed"
             E2E_FUSE_PASSED=true
@@ -412,7 +412,7 @@ if [ "$RUN_INTEGRATION" = true ]; then
             fi
         fi
     fi
-    
+
     # Check if all requested integration tests passed
     INTEGRATION_TESTS_PASSED=true
     if [ "$RUN_ALL_E2E" = true ]; then
@@ -459,7 +459,7 @@ if [ "$RUN_INTEGRATION" = true ]; then
             TOTAL_FAILED=$((TOTAL_FAILED + 1))
         fi
     fi
-    
+
     if [ "$RUN_ALL_E2E" = true ] || [ "$RUN_E2E_FULL" = true ]; then
         if [ "$E2E_FULL_PASSED" = true ]; then
             print_success "Full integration tests: PASSED"
@@ -468,7 +468,7 @@ if [ "$RUN_INTEGRATION" = true ]; then
             TOTAL_FAILED=$((TOTAL_FAILED + 1))
         fi
     fi
-    
+
     if [ "$RUN_ALL_E2E" = true ] || [ "$RUN_E2E_FUSE" = true ]; then
         if [ "$E2E_FUSE_PASSED" = true ]; then
             print_success "FUSE integration tests: PASSED"

@@ -25,7 +25,7 @@ This directory contains end-to-end integration tests for BlogGen v2, testing bot
 - Docker (for PostgreSQL)
 - Rust toolchain
 - FUSE support (libfuse3)
-- Both `client/bgc` and `v2-server` must be buildable
+- Both `client/bgc` and `server` must be buildable
 
 **Usage:**
 ```bash
@@ -69,7 +69,7 @@ Complete end-to-end test that validates the entire BlogGen v2 **CLI workflow** (
 1. ✅ Client markdown parsing and CAS generation
 2. ✅ JSON and MessagePack serialization round-trips
 3. ✅ PostgreSQL database setup
-4. ✅ v2-server startup and health checks
+4. ✅ server startup and health checks
 5. ✅ Post upload to server
 6. ✅ Post download from server
 7. ✅ Round-trip fidelity (original → server → downloaded)
@@ -80,7 +80,7 @@ Complete end-to-end test that validates the entire BlogGen v2 **CLI workflow** (
 **Requirements:**
 - Docker (for PostgreSQL)
 - Rust toolchain
-- Both `client/bgc` and `v2-server` must be buildable
+- Both `client/bgc` and `server` must be buildable
 
 **Usage:**
 ```bash
@@ -112,7 +112,7 @@ SERVER_PORT=8080 ./e2e-full.sh
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ▸ Building client (bgc)...
   ✓ Client built successfully
-▸ Building server (v2-server)...
+▸ Building server (server)...
   ✓ Server built successfully
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -207,14 +207,14 @@ To run the complete test suite:
 
 1. Build Projects
    ├─ cargo build (client/bgc)
-   └─ cargo build (v2-server)
+   └─ cargo build (server)
 
 2. Setup Infrastructure
    ├─ docker compose up (PostgreSQL)
    └─ cargo sqlx migrate run
 
 3. Start Server
-   └─ v2-server (background process)
+   └─ server (background process)
 
 4. Mount FUSE (First Time)
    └─ bgc mount /tmp/mount --server http://localhost:3000
@@ -258,14 +258,14 @@ To run the complete test suite:
 
 1. Build Projects
    ├─ cargo build (client/bgc)
-   └─ cargo build (v2-server)
+   └─ cargo build (server)
 
 2. Setup Infrastructure
    ├─ docker compose up (PostgreSQL)
    └─ cargo sqlx migrate run
 
 3. Start Server
-   └─ v2-server (background process)
+   └─ server (background process)
 
 4. Client Operations
    ├─ bgc parse test.md
@@ -328,7 +328,7 @@ jobs:
 docker ps | grep bloggen-dev-db
 
 # If not, start it manually
-cd v2-server
+cd server
 docker compose -f docker-compose.dev.yml up -d
 cd ..
 
@@ -348,7 +348,7 @@ SERVER_PORT=8080 ./tst/e2e-full.sh
 ```bash
 # Build projects manually to see detailed errors
 cd client/bgc && cargo build
-cd ../../v2-server && cargo build
+cd ../../server && cargo build
 ```
 
 ### Test Failures

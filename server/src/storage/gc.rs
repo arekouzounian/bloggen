@@ -85,7 +85,7 @@ impl GarbageCollector for PostgresGarbageCollector {
 ///
 /// # Example
 /// ```no_run
-/// # use v2_server::storage::gc::{start_gc_background_task, PostgresGarbageCollector};
+/// # use server::storage::gc::{start_gc_background_task, PostgresGarbageCollector};
 /// # use sqlx::PgPool;
 /// # async fn example(pool: PgPool) {
 /// let gc = PostgresGarbageCollector::new(pool);

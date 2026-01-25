@@ -47,7 +47,7 @@ test-client:
 	@cd client/bgc && cargo test
 
 test-server:
-	@cd v2-server && cargo test
+	@cd server && cargo test
 
 test-e2e-client:
 	@./run-tests.sh --e2e-client
@@ -73,7 +73,7 @@ build-client:
 	@cd client/bgc && cargo build
 
 build-server:
-	@cd v2-server && cargo build
+	@cd server && cargo build
 
 # Clean
 clean:

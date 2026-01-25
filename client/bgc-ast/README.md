@@ -4,7 +4,7 @@ Shared AST (Abstract Syntax Tree) types for the BlogGen project.
 
 ## Purpose
 
-This crate contains the core AST node definitions and Blake3 hash types used by both the BlogGen client (`bgc`) and server (`v2-server`). By extracting these types into a separate crate, we ensure:
+This crate contains the core AST node definitions and Blake3 hash types used by both the BlogGen client (`bgc`) and server (`server`). By extracting these types into a separate crate, we ensure:
 
 1. **Single source of truth**: AST types are defined once and used everywhere
 2. **Consistency**: Client and server always use compatible types

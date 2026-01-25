@@ -5,7 +5,7 @@
 # Tests the complete workflow:
 # 1. Client: Parse markdown -> CAS document
 # 2. Client: Serialize and deserialize
-# 3. Server: Start PostgreSQL and v2-server
+# 3. Server: Start PostgreSQL and server
 # 4. Client->Server: Upload post
 # 5. Client->Server: Download and verify
 # 6. Client: Make changes and compute delta
@@ -82,7 +82,7 @@ cleanup() {
             if ss -tlnp 2>/dev/null | grep -q ":3000 "; then
                 if [ $i -eq 10 ]; then
                     echo "Warning: Port 3000 still in use after 5 seconds, force killing..."
-                    fuser -k 3000/tcp 2>/dev/null || pkill -9 -f v2-server || true
+                    fuser -k 3000/tcp 2>/dev/null || pkill -9 -f server || true
                     sleep 2
                 fi
                 sleep 0.5
@@ -96,8 +96,8 @@ cleanup() {
     # Stop database unless KEEP_DB_RUNNING is set
     if [ "$KEEP_DB_RUNNING" != "1" ] && [ "$SKIP_DB_SETUP" != "1" ]; then
         echo "Stopping database..."
-        if [ -d "$REPO_ROOT/v2-server" ]; then
-            (cd "$REPO_ROOT/v2-server" && docker compose -f docker-compose.dev.yml down -v >/dev/null 2>&1)
+        if [ -d "$REPO_ROOT/server" ]; then
+            (cd "$REPO_ROOT/server" && docker compose -f docker-compose.dev.yml down -v >/dev/null 2>&1)
         fi
     fi
 
@@ -137,11 +137,11 @@ fail() {
 }
 
 # Check if we're in the bloggen root directory
-if [ ! -d "client/bgc" ] || [ ! -d "v2-server" ]; then
+if [ ! -d "client/bgc" ] || [ ! -d "server" ]; then
     echo -e "${RED}Error: Must run from bloggen repository root${NC}"
     echo "Expected directory structure:"
     echo "  ./client/bgc/     - BlogGen client"
-    echo "  ./v2-server/      - BlogGen v2 server"
+    echo "  ./server/      - BlogGen v2 server"
     exit 1
 fi
 
@@ -168,18 +168,18 @@ else
     BGC_BIN="$REPO_ROOT/client/bgc/target/debug/bgc"
 fi
 
-log_step "Building server (v2-server)..."
-if (cd "$REPO_ROOT/v2-server" && DATABASE_URL="$DB_URL" cargo build --quiet 2>&1); then
+log_step "Building server (server)..."
+if (cd "$REPO_ROOT/server" && DATABASE_URL="$DB_URL" cargo build --quiet 2>&1); then
     pass "Server built successfully"
 else
     fail "Server build failed"
     exit 1
 fi
 # Check workspace location first, then local
-if [ -f "$REPO_ROOT/target/debug/v2-server" ]; then
-    SERVER_BIN="$REPO_ROOT/target/debug/v2-server"
+if [ -f "$REPO_ROOT/target/debug/server" ]; then
+    SERVER_BIN="$REPO_ROOT/target/debug/server"
 else
-    SERVER_BIN="$REPO_ROOT/v2-server/target/debug/v2-server"
+    SERVER_BIN="$REPO_ROOT/server/target/debug/server"
 fi
 
 # ============================================================================
@@ -194,10 +194,10 @@ if [ "$SKIP_DB_SETUP" = "1" ]; then
 else
     log_step "Ensuring clean database state..."
     # Stop and remove any existing database
-    (cd "$REPO_ROOT/v2-server" && docker compose -f docker-compose.dev.yml down -v) >/dev/null 2>&1 || true
+    (cd "$REPO_ROOT/server" && docker compose -f docker-compose.dev.yml down -v) >/dev/null 2>&1 || true
 
     log_step "Starting PostgreSQL database..."
-    (cd "$REPO_ROOT/v2-server" && docker compose -f docker-compose.dev.yml up -d) >/dev/null 2>&1
+    (cd "$REPO_ROOT/server" && docker compose -f docker-compose.dev.yml up -d) >/dev/null 2>&1
 
     # Wait for database to be ready with proper health check
     log_step "Waiting for database to be ready..."
@@ -215,12 +215,12 @@ else
     pass "Database is ready"
 
     log_step "Running migrations..."
-    (cd "$REPO_ROOT/v2-server" && DATABASE_URL="$DB_URL" cargo sqlx migrate run) >/dev/null 2>&1
+    (cd "$REPO_ROOT/server" && DATABASE_URL="$DB_URL" cargo sqlx migrate run) >/dev/null 2>&1
     if [ $? -eq 0 ]; then
         pass "Migrations applied"
     else
         fail "Migration failed"
-        (cd "$REPO_ROOT/v2-server" && DATABASE_URL="$DB_URL" cargo sqlx migrate run 2>&1)
+        (cd "$REPO_ROOT/server" && DATABASE_URL="$DB_URL" cargo sqlx migrate run 2>&1)
         exit 1
     fi
 fi
@@ -246,8 +246,8 @@ for i in {1..20}; do
     fi
 done
 
-log_step "Starting v2-server on port $SERVER_PORT..."
-(cd "$REPO_ROOT/v2-server" && DATABASE_URL="$DB_URL" "$SERVER_BIN" > "$TEST_DIR/server.log" 2>&1) &
+log_step "Starting server on port $SERVER_PORT..."
+(cd "$REPO_ROOT/server" && DATABASE_URL="$DB_URL" "$SERVER_BIN" > "$TEST_DIR/server.log" 2>&1) &
 SERVER_PID=$!
 
 # Wait for server to be ready

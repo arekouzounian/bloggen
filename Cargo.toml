@@ -2,7 +2,7 @@
 members = [
     "client/bgc",
     "client/bgc-ast",
-    "v2-server",
+    "server",
 ]
 resolver = "2"
 

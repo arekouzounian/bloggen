@@ -5,7 +5,7 @@ use axum::{
 use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use v2_server::{config::Config, db::Database, handlers};
+use server::{config::Config, db::Database, handlers};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -15,11 +15,11 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| {
             eprintln!("Warning: Could not load config file, using defaults");
             Config {
-                server: v2_server::config::ServerConfig {
+                server: server::config::ServerConfig {
                     host: "127.0.0.1".to_string(),
                     port: 3000,
                 },
-                database: v2_server::config::DatabaseConfig {
+                database: server::config::DatabaseConfig {
                     url: std::env::var("DATABASE_URL")
                         .unwrap_or_else(|_| "postgres://localhost/bloggen".to_string()),
                     max_connections: 10,

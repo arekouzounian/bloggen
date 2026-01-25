@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
 
 # Copy dependency manifests
 # Build context is parent directory, so paths are relative to bloggen/
-COPY v2-server/Cargo.toml v2-server/Cargo.lock ./
+COPY server/Cargo.toml server/Cargo.lock ./
 COPY client/bgc-ast/Cargo.toml ./client/bgc-ast/
 
 # Create dummy source files to cache dependencies
@@ -25,7 +25,7 @@ RUN cargo build --release && \
     rm -rf src client/bgc-ast/src
 
 # Copy actual source code
-COPY v2-server/src ./src
+COPY server/src ./src
 COPY client/bgc-ast ./client/bgc-ast
 
 # Build the application
@@ -51,13 +51,13 @@ RUN mkdir -p /app/migrations /etc/bloggen /var/log/bloggen && \
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /build/target/release/v2-server /app/bloggen-server
+COPY --from=builder /build/target/release/server /app/bloggen-server
 
 # Copy migrations (relative to build context = bloggen/)
-COPY v2-server/migrations /app/migrations
+COPY server/migrations /app/migrations
 
 # Copy default config (can be overridden)
-COPY v2-server/config.example.json /etc/bloggen/config.json
+COPY server/config.example.json /etc/bloggen/config.json
 
 USER bloggen
 

@@ -80,7 +80,7 @@ sqlx-check:
 
 # Build the project
 build:
-	@echo "Building v2-server..."
+	@echo "Building server..."
 	@cargo build
 
 # Run the server

@@ -38,7 +38,7 @@ Unit tests verify individual components in isolation. These are fast and don't r
   - Delta computation
   - Rendering
 
-- Server (`v2-server`): 33+ tests
+- Server (`server`): 33+ tests
   - Configuration management
   - Error handling
   - HTML/Markdown rendering
@@ -138,7 +138,7 @@ cargo test --workspace
 
 # Test specific package
 cargo test -p bgc
-cargo test -p v2-server
+cargo test -p server
 
 # Run specific test
 cargo test -p bgc test_parse_markdown_file
@@ -269,7 +269,7 @@ cargo build --workspace
 
 # Check binary location
 ls -la target/debug/bgc
-ls -la target/debug/v2-server
+ls -la target/debug/server
 ```
 
 #### 3. Database Connection Errors
@@ -279,7 +279,7 @@ ls -la target/debug/v2-server
 docker ps | grep bloggen-dev-db
 
 # Start database manually
-cd v2-server
+cd server
 docker compose -f docker-compose.dev.yml up -d
 
 # Run tests with existing DB
@@ -360,7 +360,7 @@ bloggen/
 │   └── bgc-ast/
 │       └── src/
 │           └── lib.rs
-├── v2-server/
+├── server/
 │   └── src/
 │       ├── main.rs
 │       ├── config.rs        # Unit tests inline

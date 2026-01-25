@@ -39,7 +39,7 @@ services:
   server:
     build:
       context: ..
-      dockerfile: v2-server/Dockerfile
+      dockerfile: server/Dockerfile
     image: bloggen-server:latest
     container_name: bloggen-server
     restart: unless-stopped

@@ -195,7 +195,7 @@ SERVER_PORT=8080 ./run-tests.sh --integration
 
 - **Unit Tests**: Located in `src/` directories as Rust test modules
   - Client: `client/bgc/src/**/*.rs` (106+ tests)
-  - Server: `v2-server/src/**/*.rs` (33+ tests)
+  - Server: `server/src/**/*.rs` (33+ tests)
   
 - **Integration Tests**: Located in `tst/` directory
   - `e2e-client.sh` - Client-only workflow tests
