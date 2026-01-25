@@ -42,6 +42,21 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bloggen
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
     steps:
       - uses: actions/checkout@v4
       
@@ -71,11 +86,26 @@ jobs:
       - name: Build workspace
         run: cargo build --workspace
       
+      - name: Install sqlx-cli (if not cached)
+        run: |
+          if ! command -v sqlx &> /dev/null; then
+            cargo install sqlx-cli --no-default-features --features postgres
+          fi
+      
       - name: Run client e2e tests
         run: ./run-tests.sh --e2e-client --verbose
       
+      - name: Run database migrations
+        run: cargo sqlx migrate run
+        working-directory: ./server
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/bloggen
+      
       - name: Run full integration tests
         run: ./run-tests.sh --e2e-full --verbose
+        env:
+          SKIP_DB_SETUP: 1
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/bloggen
       
       # FUSE tests disabled in CI for now (require kernel modules)
       # - name: Run FUSE integration tests
