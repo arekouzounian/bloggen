@@ -1,5 +1,0 @@
-services: 
-  frontend: 
-    build: .
-    volumes: 
-      - post-volume:/app/app/static
