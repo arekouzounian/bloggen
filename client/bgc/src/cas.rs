@@ -110,33 +110,25 @@ impl NodeStore {
     ) -> Option<Vec<(&'a Blake3Hash, &'a AstNode)>> {
         let mut result = Vec::new();
         let mut visited = std::collections::HashSet::new();
+        let mut visiting = vec![root_hash];
 
-        self.walk_tree_recursive(root_hash, &mut result, &mut visited)?;
+        while !visiting.is_empty() {
+            let hash = visiting.pop().unwrap();
+            visited.insert(*hash);
+
+            let node = self.get(hash)?;
+            result.push((hash, node));
+
+            for child_hash in node.children() {
+                // revisit: is a visited set even necessary?
+                // AST shouldn't contain cycles
+                if !visited.contains(child_hash) {
+                    visiting.push(child_hash);
+                }
+            }
+        }
 
         Some(result)
-    }
-
-    fn walk_tree_recursive<'a>(
-        &'a self,
-        hash: &'a Blake3Hash,
-        result: &mut Vec<(&'a Blake3Hash, &'a AstNode)>,
-        visited: &mut std::collections::HashSet<Blake3Hash>,
-    ) -> Option<()> {
-        // Avoid infinite loops in case of circular references (shouldn't happen)
-        if visited.contains(hash) {
-            return Some(());
-        }
-        visited.insert(*hash);
-
-        let node = self.get(hash)?;
-        result.push((hash, node));
-
-        // Recursively walk children
-        for child_hash in node.children() {
-            self.walk_tree_recursive(child_hash, result, visited)?;
-        }
-
-        Some(())
     }
 }
 
