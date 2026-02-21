@@ -34,6 +34,7 @@ pub mod convert;
 pub mod error;
 pub mod fuse;
 pub mod http;
+pub mod lru;
 pub mod render;
 
 // Re-export main types for convenience
