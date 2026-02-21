@@ -19,7 +19,15 @@ where
     prev: Option<usize>,
 }
 
-/// Thread-safe
+// Current implementation mutates even on reads because of LRU reordering.
+// Another approach which would allow immutable concurrent reads would be to
+// avoid updating LRU on reads, and only update on writes. This of course
+// would no longer be a true LRU cache, but a LFW (Least Frequently Written)
+// cache. Since we expect writes to happen pretty frequently, though, it might
+// be preferable.
+// Do we expect cache sizes to become a problem?
+
+/// Thread unsafe LRU cache implementation.
 pub struct LruCache<K, V>
 where
     K: Eq + Hash + Clone + Debug,
@@ -205,7 +213,7 @@ where
             .flatten()
     }
 
-    pub fn get<'a, 'b>(&'a mut self, key: &'a K) -> Option<&'a V> {
+    pub fn get<'a, 'b>(&'a mut self, key: &'b K) -> Option<&'a V> {
         let node_index = *self.index.get(key)?;
         self.put_to_front(node_index);
         self.get_no_update(key)
