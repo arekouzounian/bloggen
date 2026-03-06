@@ -193,10 +193,7 @@ mod tests {
         let mut renderer = MarkdownRenderer::new(&store);
         let result = renderer.render(&link).unwrap();
 
-        assert_eq!(
-            result,
-            "[click here](https://example.com \"Example Site\")"
-        );
+        assert_eq!(result, "[click here](https://example.com \"Example Site\")");
     }
 
     #[test]
@@ -938,5 +935,515 @@ The end.
 
         // Should parse successfully
         assert!(root_hash2.is_ok(), "Rendered markdown should be parseable");
+    }
+
+    // ========== YAML Frontmatter E2E Roundtrip Tests ==========
+
+    /// Helper: parse markdown, render to markdown, re-parse, verify YAML is preserved.
+    fn yaml_roundtrip(markdown: &str) -> (String, bool, Option<String>) {
+        let mut store1 = NodeStore::new();
+        let root_hash1 = crate::convert::parse_markdown(markdown, &mut store1).unwrap();
+        let root1 = store1.get(&root_hash1).unwrap();
+
+        let mut renderer = MarkdownRenderer::new(&store1);
+        let rendered = renderer.render(root1).unwrap();
+
+        // Re-parse the rendered markdown
+        let mut store2 = NodeStore::new();
+        let root_hash2 = crate::convert::parse_markdown(&rendered, &mut store2).unwrap();
+        let nodes = store2.walk_tree(&root_hash2).unwrap();
+
+        let yaml_value = nodes.iter().find_map(|(_, node)| match node {
+            AstNode::Yaml { value } => Some(value.clone()),
+            _ => None,
+        });
+
+        let has_yaml = yaml_value.is_some();
+        (rendered, has_yaml, yaml_value)
+    }
+
+    #[test]
+    fn test_roundtrip_yaml_frontmatter_simple() {
+        let markdown = "---\ntitle: My Post\nauthor: Alice\n---\n\n# Hello\n\nContent here.\n";
+
+        let (rendered, has_yaml, yaml_value) = yaml_roundtrip(markdown);
+
+        assert!(has_yaml, "YAML frontmatter should survive round-trip");
+        let yaml = yaml_value.unwrap();
+        assert!(
+            yaml.contains("title: My Post"),
+            "YAML should preserve title field"
+        );
+        assert!(
+            yaml.contains("author: Alice"),
+            "YAML should preserve author field"
+        );
+
+        // Verify the heading and content also survived
+        assert!(rendered.contains("# Hello"), "Heading should be preserved");
+        assert!(
+            rendered.contains("Content here."),
+            "Body content should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_roundtrip_yaml_frontmatter_with_tags() {
+        let markdown = "---\ntitle: Tagged Post\ntags:\n  - rust\n  - markdown\n  - blogging\n---\n\n# Tagged Post\n\nThis post has tags.\n";
+
+        let (rendered, has_yaml, yaml_value) = yaml_roundtrip(markdown);
+
+        assert!(has_yaml, "YAML frontmatter should survive round-trip");
+        let yaml = yaml_value.unwrap();
+        assert!(
+            yaml.contains("title: Tagged Post"),
+            "YAML should preserve title"
+        );
+        assert!(yaml.contains("rust"), "YAML should preserve tag 'rust'");
+        assert!(
+            yaml.contains("markdown"),
+            "YAML should preserve tag 'markdown'"
+        );
+
+        assert!(
+            rendered.contains("# Tagged Post"),
+            "Heading should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_roundtrip_yaml_frontmatter_multifield() {
+        let markdown = "---\ntitle: Full Post\nauthor: Bob\ndate: 2026-01-15\ndraft: false\ndescription: A comprehensive test post\n---\n\n# Full Post\n\nBody text.\n";
+
+        let (_, has_yaml, yaml_value) = yaml_roundtrip(markdown);
+
+        assert!(has_yaml, "YAML frontmatter should survive round-trip");
+        let yaml = yaml_value.unwrap();
+        assert!(yaml.contains("title: Full Post"));
+        assert!(yaml.contains("author: Bob"));
+        assert!(yaml.contains("date: 2026-01-15"));
+        assert!(yaml.contains("draft: false"));
+        assert!(yaml.contains("description: A comprehensive test post"));
+    }
+
+    #[test]
+    fn test_roundtrip_yaml_frontmatter_only() {
+        let markdown = "---\ntitle: Just Frontmatter\n---\n";
+
+        let (_, has_yaml, yaml_value) = yaml_roundtrip(markdown);
+
+        assert!(has_yaml, "YAML frontmatter should survive round-trip");
+        let yaml = yaml_value.unwrap();
+        assert!(yaml.contains("title: Just Frontmatter"));
+    }
+
+    #[test]
+    fn test_roundtrip_yaml_frontmatter_with_complex_content() {
+        let markdown = r#"---
+title: Complex Post
+author: Charlie
+---
+
+# Complex Post
+
+This post has **bold**, *italic*, and ~~strikethrough~~ text.
+
+## Code Section
+
+```rust
+fn main() {
+    println!("Hello!");
+}
+```
+
+## List Section
+
+- Item 1
+- Item 2
+- Item 3
+
+> A blockquote
+
+---
+
+The end.
+"#;
+
+        let (rendered, has_yaml, yaml_value) = yaml_roundtrip(markdown);
+
+        assert!(has_yaml, "YAML frontmatter should survive round-trip");
+        let yaml = yaml_value.unwrap();
+        assert!(yaml.contains("title: Complex Post"));
+        assert!(yaml.contains("author: Charlie"));
+
+        // Verify body content types survived
+        assert!(rendered.contains("**bold**"));
+        assert!(rendered.contains("*italic*"));
+        assert!(rendered.contains("~~strikethrough~~"));
+        assert!(rendered.contains("```rust"));
+        assert!(rendered.contains("- Item 1"));
+    }
+
+    #[test]
+    fn test_roundtrip_yaml_frontmatter_double_roundtrip() {
+        let markdown = "---\ntitle: Double Trip\nauthor: Dana\n---\n\n# Hello\n\nContent.\n";
+
+        // First round-trip
+        let (rendered1, has_yaml1, _) = yaml_roundtrip(markdown);
+        assert!(has_yaml1, "YAML should survive first round-trip");
+
+        // Second round-trip (rendered1 → AST → rendered2)
+        let (rendered2, has_yaml2, yaml_value2) = yaml_roundtrip(&rendered1);
+        assert!(has_yaml2, "YAML should survive second round-trip");
+
+        let yaml2 = yaml_value2.unwrap();
+        assert!(yaml2.contains("title: Double Trip"));
+        assert!(yaml2.contains("author: Dana"));
+
+        // After two round-trips, output should stabilize
+        assert_eq!(
+            rendered1, rendered2,
+            "Output should be stable after second round-trip"
+        );
+    }
+
+    #[test]
+    fn test_roundtrip_yaml_hash_stability() {
+        let markdown = "---\ntitle: Hash Test\n---\n\n# Hello\n";
+
+        let mut store1 = NodeStore::new();
+        let root_hash1 = crate::convert::parse_markdown(markdown, &mut store1).unwrap();
+        let root1 = store1.get(&root_hash1).unwrap();
+
+        let mut renderer = MarkdownRenderer::new(&store1);
+        let rendered = renderer.render(root1).unwrap();
+
+        // Parse again and check hashes of YAML nodes match
+        let mut store2 = NodeStore::new();
+        let root_hash2 = crate::convert::parse_markdown(&rendered, &mut store2).unwrap();
+
+        let nodes1 = store1.walk_tree(&root_hash1).unwrap();
+        let nodes2 = store2.walk_tree(&root_hash2).unwrap();
+
+        let yaml_hash1 = nodes1.iter().find_map(|(hash, node)| {
+            if matches!(node, AstNode::Yaml { .. }) {
+                Some(*hash)
+            } else {
+                None
+            }
+        });
+        let yaml_hash2 = nodes2.iter().find_map(|(hash, node)| {
+            if matches!(node, AstNode::Yaml { .. }) {
+                Some(*hash)
+            } else {
+                None
+            }
+        });
+
+        assert!(yaml_hash1.is_some(), "Original should have YAML node");
+        assert!(yaml_hash2.is_some(), "Re-parsed should have YAML node");
+        assert_eq!(
+            yaml_hash1.unwrap(),
+            yaml_hash2.unwrap(),
+            "YAML node hashes should match after round-trip"
+        );
+    }
+
+    #[test]
+    fn test_roundtrip_yaml_value_exact_preservation() {
+        let markdown =
+            "---\ntitle: Exact Test\nauthor: Eve\ntags:\n  - alpha\n  - beta\n---\n\n# Post\n";
+
+        let mut store = NodeStore::new();
+        let root_hash = crate::convert::parse_markdown(markdown, &mut store).unwrap();
+
+        // Extract the YAML value from the AST
+        let nodes = store.walk_tree(&root_hash).unwrap();
+        let yaml_value_original = nodes.iter().find_map(|(_, node)| match node {
+            AstNode::Yaml { value } => Some(value.clone()),
+            _ => None,
+        });
+        assert!(yaml_value_original.is_some());
+
+        // Render and re-parse
+        let root = store.get(&root_hash).unwrap();
+        let mut renderer = MarkdownRenderer::new(&store);
+        let rendered = renderer.render(root).unwrap();
+
+        let mut store2 = NodeStore::new();
+        let root_hash2 = crate::convert::parse_markdown(&rendered, &mut store2).unwrap();
+        let nodes2 = store2.walk_tree(&root_hash2).unwrap();
+        let yaml_value_roundtripped = nodes2.iter().find_map(|(_, node)| match node {
+            AstNode::Yaml { value } => Some(value.clone()),
+            _ => None,
+        });
+        assert!(yaml_value_roundtripped.is_some());
+
+        // The YAML content should be exactly preserved
+        assert_eq!(
+            yaml_value_original.unwrap(),
+            yaml_value_roundtripped.unwrap(),
+            "YAML value should be exactly preserved through round-trip"
+        );
+    }
+
+    // ========== Additional Roundtrip Tests for Coverage Gaps ==========
+
+    #[test]
+    fn test_roundtrip_toml_frontmatter() {
+        let markdown = "+++\ntitle = \"My Post\"\nauthor = \"Alice\"\n+++\n\n# Hello\n\nContent.\n";
+
+        let mut store1 = NodeStore::new();
+        let root_hash1 = crate::convert::parse_markdown(markdown, &mut store1).unwrap();
+        let root1 = store1.get(&root_hash1).unwrap();
+
+        let mut renderer = MarkdownRenderer::new(&store1);
+        let rendered = renderer.render(root1).unwrap();
+
+        // Re-parse and verify TOML is present
+        let mut store2 = NodeStore::new();
+        let root_hash2 = crate::convert::parse_markdown(&rendered, &mut store2).unwrap();
+        let nodes = store2.walk_tree(&root_hash2).unwrap();
+        let has_toml = nodes
+            .iter()
+            .any(|(_, node)| matches!(node, AstNode::Toml { .. }));
+        assert!(has_toml, "TOML frontmatter should survive round-trip");
+    }
+
+    #[test]
+    fn test_roundtrip_table() {
+        let markdown = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |\n";
+
+        let mut store = NodeStore::new();
+        let root_hash = crate::convert::parse_markdown(markdown, &mut store).unwrap();
+        let root = store.get(&root_hash).unwrap();
+
+        let mut renderer = MarkdownRenderer::new(&store);
+        let rendered = renderer.render(root).unwrap();
+
+        // Verify table content preserved
+        assert!(rendered.contains("Name"));
+        assert!(rendered.contains("Age"));
+        assert!(rendered.contains("Alice"));
+        assert!(rendered.contains("30"));
+
+        // Re-parse should have a table
+        let mut store2 = NodeStore::new();
+        let root_hash2 = crate::convert::parse_markdown(&rendered, &mut store2).unwrap();
+        let nodes = store2.walk_tree(&root_hash2).unwrap();
+        let has_table = nodes
+            .iter()
+            .any(|(_, node)| matches!(node, AstNode::Table { .. }));
+        assert!(has_table, "Table should survive round-trip");
+    }
+
+    #[test]
+    fn test_roundtrip_blockquote() {
+        let markdown = "> This is a blockquote.\n> With multiple lines.\n";
+
+        let mut store = NodeStore::new();
+        let root_hash = crate::convert::parse_markdown(markdown, &mut store).unwrap();
+        let root = store.get(&root_hash).unwrap();
+
+        let mut renderer = MarkdownRenderer::new(&store);
+        let rendered = renderer.render(root).unwrap();
+
+        assert!(rendered.contains("> "));
+        assert!(rendered.contains("blockquote"));
+
+        let mut store2 = NodeStore::new();
+        let root_hash2 = crate::convert::parse_markdown(&rendered, &mut store2).unwrap();
+        let nodes = store2.walk_tree(&root_hash2).unwrap();
+        let has_blockquote = nodes
+            .iter()
+            .any(|(_, node)| matches!(node, AstNode::Blockquote { .. }));
+        assert!(has_blockquote, "Blockquote should survive round-trip");
+    }
+
+    #[test]
+    fn test_roundtrip_strikethrough() {
+        let markdown = "This is ~~deleted~~ text.";
+
+        let mut store = NodeStore::new();
+        let root_hash = crate::convert::parse_markdown(markdown, &mut store).unwrap();
+        let root = store.get(&root_hash).unwrap();
+
+        let mut renderer = MarkdownRenderer::new(&store);
+        let rendered = renderer.render(root).unwrap();
+
+        assert!(rendered.contains("~~deleted~~"));
+
+        let mut store2 = NodeStore::new();
+        let root_hash2 = crate::convert::parse_markdown(&rendered, &mut store2).unwrap();
+        let nodes = store2.walk_tree(&root_hash2).unwrap();
+        let has_delete = nodes
+            .iter()
+            .any(|(_, node)| matches!(node, AstNode::Delete { .. }));
+        assert!(has_delete, "Strikethrough should survive round-trip");
+    }
+
+    #[test]
+    fn test_roundtrip_image() {
+        let markdown = "![Alt text](https://example.com/image.png)\n";
+
+        let mut store = NodeStore::new();
+        let root_hash = crate::convert::parse_markdown(markdown, &mut store).unwrap();
+        let root = store.get(&root_hash).unwrap();
+
+        let mut renderer = MarkdownRenderer::new(&store);
+        let rendered = renderer.render(root).unwrap();
+
+        assert!(rendered.contains("![Alt text]"));
+        assert!(rendered.contains("https://example.com/image.png"));
+
+        let mut store2 = NodeStore::new();
+        let root_hash2 = crate::convert::parse_markdown(&rendered, &mut store2).unwrap();
+        let nodes = store2.walk_tree(&root_hash2).unwrap();
+        let has_image = nodes
+            .iter()
+            .any(|(_, node)| matches!(node, AstNode::Image { .. }));
+        assert!(has_image, "Image should survive round-trip");
+    }
+
+    #[test]
+    fn test_roundtrip_thematic_break() {
+        let markdown = "Before\n\n---\n\nAfter\n";
+
+        let mut store = NodeStore::new();
+        let root_hash = crate::convert::parse_markdown(markdown, &mut store).unwrap();
+        let root = store.get(&root_hash).unwrap();
+
+        let mut renderer = MarkdownRenderer::new(&store);
+        let rendered = renderer.render(root).unwrap();
+
+        assert!(rendered.contains("---"));
+
+        let mut store2 = NodeStore::new();
+        let root_hash2 = crate::convert::parse_markdown(&rendered, &mut store2).unwrap();
+        let nodes = store2.walk_tree(&root_hash2).unwrap();
+        let has_break = nodes
+            .iter()
+            .any(|(_, node)| matches!(node, AstNode::ThematicBreak));
+        assert!(has_break, "Thematic break should survive round-trip");
+    }
+
+    #[test]
+    fn test_roundtrip_ordered_list() {
+        let markdown = "1. First\n2. Second\n3. Third\n";
+
+        let mut store = NodeStore::new();
+        let root_hash = crate::convert::parse_markdown(markdown, &mut store).unwrap();
+        let root = store.get(&root_hash).unwrap();
+
+        let mut renderer = MarkdownRenderer::new(&store);
+        let rendered = renderer.render(root).unwrap();
+
+        assert!(rendered.contains("1. First"));
+        assert!(rendered.contains("2. Second"));
+        assert!(rendered.contains("3. Third"));
+
+        let mut store2 = NodeStore::new();
+        let root_hash2 = crate::convert::parse_markdown(&rendered, &mut store2).unwrap();
+        let nodes = store2.walk_tree(&root_hash2).unwrap();
+        let has_ordered_list = nodes
+            .iter()
+            .any(|(_, node)| matches!(node, AstNode::List { ordered: true, .. }));
+        assert!(has_ordered_list, "Ordered list should survive round-trip");
+    }
+
+    #[test]
+    fn test_roundtrip_task_list() {
+        let markdown = "- [x] Done\n- [ ] Todo\n";
+
+        let mut store = NodeStore::new();
+        let root_hash = crate::convert::parse_markdown(markdown, &mut store).unwrap();
+        let root = store.get(&root_hash).unwrap();
+
+        let mut renderer = MarkdownRenderer::new(&store);
+        let rendered = renderer.render(root).unwrap();
+
+        assert!(rendered.contains("[x]"));
+        assert!(rendered.contains("[ ]"));
+
+        let mut store2 = NodeStore::new();
+        let root_hash2 = crate::convert::parse_markdown(&rendered, &mut store2).unwrap();
+        let nodes = store2.walk_tree(&root_hash2).unwrap();
+        let has_checked = nodes.iter().any(|(_, node)| {
+            matches!(
+                node,
+                AstNode::ListItem {
+                    checked: Some(true),
+                    ..
+                }
+            )
+        });
+        let has_unchecked = nodes.iter().any(|(_, node)| {
+            matches!(
+                node,
+                AstNode::ListItem {
+                    checked: Some(false),
+                    ..
+                }
+            )
+        });
+        assert!(has_checked, "Checked item should survive round-trip");
+        assert!(has_unchecked, "Unchecked item should survive round-trip");
+    }
+
+    #[test]
+    fn test_roundtrip_nested_list() {
+        let markdown = "- Parent\n  - Child 1\n  - Child 2\n";
+
+        let mut store = NodeStore::new();
+        let root_hash = crate::convert::parse_markdown(markdown, &mut store).unwrap();
+        let root = store.get(&root_hash).unwrap();
+
+        let mut renderer = MarkdownRenderer::new(&store);
+        let rendered = renderer.render(root).unwrap();
+
+        assert!(rendered.contains("Parent"));
+        assert!(rendered.contains("Child 1"));
+        assert!(rendered.contains("Child 2"));
+
+        // Re-parse and check we have at least 2 lists (outer + inner)
+        let mut store2 = NodeStore::new();
+        let root_hash2 = crate::convert::parse_markdown(&rendered, &mut store2).unwrap();
+        let nodes = store2.walk_tree(&root_hash2).unwrap();
+        let list_count = nodes
+            .iter()
+            .filter(|(_, node)| matches!(node, AstNode::List { .. }))
+            .count();
+        assert!(
+            list_count >= 2,
+            "Should have at least 2 lists (outer + nested), found {}",
+            list_count
+        );
+    }
+
+    #[test]
+    fn test_roundtrip_link_with_title() {
+        let markdown = "[Example](https://example.com \"Title\")\n";
+
+        let mut store = NodeStore::new();
+        let root_hash = crate::convert::parse_markdown(markdown, &mut store).unwrap();
+        let root = store.get(&root_hash).unwrap();
+
+        let mut renderer = MarkdownRenderer::new(&store);
+        let rendered = renderer.render(root).unwrap();
+
+        assert!(rendered.contains("Example"));
+        assert!(rendered.contains("https://example.com"));
+        assert!(rendered.contains("Title"));
+
+        let mut store2 = NodeStore::new();
+        let root_hash2 = crate::convert::parse_markdown(&rendered, &mut store2).unwrap();
+        let nodes = store2.walk_tree(&root_hash2).unwrap();
+        let has_link_with_title = nodes
+            .iter()
+            .any(|(_, node)| matches!(node, AstNode::Link { title: Some(t), .. } if t == "Title"));
+        assert!(
+            has_link_with_title,
+            "Link with title should survive round-trip"
+        );
     }
 }

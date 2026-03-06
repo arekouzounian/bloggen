@@ -475,6 +475,8 @@ fn is_block_node(node: &AstNode) -> bool {
             | AstNode::Blockquote { .. }
             | AstNode::ThematicBreak
             | AstNode::Table { .. }
+            | AstNode::Yaml { .. }
+            | AstNode::Toml { .. }
     )
 }
 

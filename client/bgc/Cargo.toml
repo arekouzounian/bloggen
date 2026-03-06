@@ -26,3 +26,11 @@ hex = "0.4"
 [dev-dependencies]
 tempfile = "3.0"
 mockito = "1.2"
+
+[[test]]
+name = "comprehensive_tests"
+path = "tst/comprehensive_tests.rs"
+
+[[test]]
+name = "fuse_tests"
+path = "tst/fuse_tests.rs"
