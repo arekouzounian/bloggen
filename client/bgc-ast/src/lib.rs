@@ -416,4 +416,172 @@ mod tests {
         assert!(json.contains("\"type\":\"text\""));
         assert!(json.contains("\"value\":\"hello world\""));
     }
+
+    #[test]
+    fn test_leaf_variants() {
+        // All leaf nodes should return true for is_leaf()
+        assert!(AstNode::InlineCode { value: "x".into() }.is_leaf());
+        assert!(AstNode::Break.is_leaf());
+        assert!(AstNode::ThematicBreak.is_leaf());
+        assert!(AstNode::Html { value: "<hr>".into() }.is_leaf());
+        assert!(AstNode::Math { value: "x^2".into() }.is_leaf());
+        assert!(AstNode::InlineMath { value: "y".into() }.is_leaf());
+        assert!(AstNode::Yaml { value: "key: val".into() }.is_leaf());
+        assert!(AstNode::Toml { value: "[meta]".into() }.is_leaf());
+        assert!(AstNode::MdxjsEsm { value: "import x".into() }.is_leaf());
+        assert!(AstNode::MdxFlowExpression { value: "{a}".into() }.is_leaf());
+        assert!(AstNode::MdxTextExpression { value: "{b}".into() }.is_leaf());
+
+        // Non-leaf nodes
+        assert!(!AstNode::Root { children: vec![] }.is_leaf());
+        assert!(!AstNode::Heading { level: 1, children: vec![] }.is_leaf());
+        assert!(!AstNode::List { ordered: false, children: vec![] }.is_leaf());
+        assert!(!AstNode::Blockquote { children: vec![] }.is_leaf());
+        assert!(!AstNode::Strong { children: vec![] }.is_leaf());
+        assert!(!AstNode::Emphasis { children: vec![] }.is_leaf());
+    }
+
+    #[test]
+    fn test_node_type_strings() {
+        assert_eq!(AstNode::Root { children: vec![] }.node_type(), "Root");
+        assert_eq!(
+            AstNode::Heading {
+                level: 1,
+                children: vec![]
+            }
+            .node_type(),
+            "Heading"
+        );
+        assert_eq!(
+            AstNode::Paragraph { children: vec![] }.node_type(),
+            "Paragraph"
+        );
+        assert_eq!(
+            AstNode::Text { value: "t".into() }.node_type(),
+            "Text"
+        );
+        assert_eq!(
+            AstNode::InlineCode { value: "c".into() }.node_type(),
+            "InlineCode"
+        );
+        assert_eq!(
+            AstNode::CodeBlock {
+                value: "x".into(),
+                lang: None
+            }
+            .node_type(),
+            "CodeBlock"
+        );
+        assert_eq!(AstNode::Break.node_type(), "Break");
+        assert_eq!(AstNode::ThematicBreak.node_type(), "ThematicBreak");
+        assert_eq!(
+            AstNode::Strong { children: vec![] }.node_type(),
+            "Strong"
+        );
+        assert_eq!(
+            AstNode::Emphasis { children: vec![] }.node_type(),
+            "Emphasis"
+        );
+        assert_eq!(
+            AstNode::Delete { children: vec![] }.node_type(),
+            "Delete"
+        );
+        assert_eq!(
+            AstNode::Html { value: "".into() }.node_type(),
+            "Html"
+        );
+        assert_eq!(
+            AstNode::Math { value: "".into() }.node_type(),
+            "Math"
+        );
+        assert_eq!(
+            AstNode::InlineMath { value: "".into() }.node_type(),
+            "InlineMath"
+        );
+        assert_eq!(AstNode::Yaml { value: "".into() }.node_type(), "Yaml");
+        assert_eq!(AstNode::Toml { value: "".into() }.node_type(), "Toml");
+        assert_eq!(
+            AstNode::List {
+                ordered: true,
+                children: vec![]
+            }
+            .node_type(),
+            "List"
+        );
+        assert_eq!(
+            AstNode::ListItem {
+                spread: false,
+                children: vec![],
+                checked: None
+            }
+            .node_type(),
+            "ListItem"
+        );
+        assert_eq!(
+            AstNode::Blockquote { children: vec![] }.node_type(),
+            "Blockquote"
+        );
+        assert_eq!(
+            AstNode::Table {
+                align: vec![],
+                children: vec![]
+            }
+            .node_type(),
+            "Table"
+        );
+        assert_eq!(
+            AstNode::TableRow { children: vec![] }.node_type(),
+            "TableRow"
+        );
+        assert_eq!(
+            AstNode::TableCell { children: vec![] }.node_type(),
+            "TableCell"
+        );
+        assert_eq!(
+            AstNode::Link {
+                url: "".into(),
+                title: None,
+                children: vec![]
+            }
+            .node_type(),
+            "Link"
+        );
+        assert_eq!(
+            AstNode::Image {
+                url: "".into(),
+                alt: "".into(),
+                title: None
+            }
+            .node_type(),
+            "Image"
+        );
+    }
+
+    #[test]
+    fn test_blake3hash_roundtrip() {
+        let original = Blake3Hash::new([42u8; 32]);
+        let hex = original.to_hex();
+        let recovered = Blake3Hash::from_hex(&hex).unwrap();
+        assert_eq!(original.as_bytes(), recovered.as_bytes());
+    }
+
+    #[test]
+    fn test_blake3hash_from_hex_invalid() {
+        // Wrong length
+        assert!(Blake3Hash::from_hex("abc").is_err());
+        // Non-hex characters
+        assert!(Blake3Hash::from_hex(&"zz".repeat(32)).is_err());
+        // Empty string
+        assert!(Blake3Hash::from_hex("").is_err());
+    }
+
+    #[test]
+    fn test_blake3hash_serialization() {
+        let hash = Blake3Hash::new([1u8; 32]);
+        let json = serde_json::to_string(&hash).unwrap();
+        // Should serialize as a hex string
+        assert!(json.starts_with('"'));
+        let recovered: Blake3Hash = serde_json::from_str(&json).unwrap();
+        assert_eq!(hash.as_bytes(), recovered.as_bytes());
+    }
 }

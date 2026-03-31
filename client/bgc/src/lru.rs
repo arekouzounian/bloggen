@@ -111,6 +111,7 @@ where
         let head_ind = self.head.unwrap();
         self.entry_arena[head_ind].prev = Some(new_ind);
         self.entry_arena[new_ind].next = Some(head_ind);
+        self.entry_arena[new_ind].prev = None; // new head has no predecessor
         self.head = Some(new_ind);
     }
 
@@ -124,7 +125,7 @@ where
         self.index.remove(&tail_ref.key);
 
         if tail_ref.prev.is_none() {
-            // tail is head
+            // tail is head — only one element
             self.head = None;
             self.tail = None;
             self.entry_arena.clear();
@@ -132,19 +133,36 @@ where
             return None;
         }
 
-        self.tail = tail_ref.prev;
+        // Update tail: the predecessor becomes the new tail with no next
+        let new_tail_ind = tail_ref.prev.unwrap();
+        self.tail = Some(new_tail_ind);
+        self.entry_arena[new_tail_ind].next = None;
 
-        // put last added entry into evicted node's place,
-        // update pointers, then pop
-        self.entry_arena[old_tail_ind] = self.entry_arena[self.entry_arena.len() - 1].clone();
+        let last_ind = self.entry_arena.len() - 1;
 
-        // at this point, entry_arena[old_tail_ind] has taken value of last
-        // cache entry
-        if let Some(prev_ind) = self.entry_arena[old_tail_ind].prev {
-            self.entry_arena[prev_ind].next = Some(old_tail_ind);
-        }
-        if let Some(next_ind) = self.entry_arena[old_tail_ind].next {
-            self.entry_arena[next_ind].prev = Some(old_tail_ind);
+        if old_tail_ind != last_ind {
+            // Move the last arena entry into the evicted slot so the arena stays compact
+            self.entry_arena[old_tail_ind] = self.entry_arena[last_ind].clone();
+
+            // Re-wire the moved entry's neighbors to its new position
+            if let Some(prev_ind) = self.entry_arena[old_tail_ind].prev {
+                self.entry_arena[prev_ind].next = Some(old_tail_ind);
+            }
+            if let Some(next_ind) = self.entry_arena[old_tail_ind].next {
+                self.entry_arena[next_ind].prev = Some(old_tail_ind);
+            }
+
+            // Fix the index so the moved key points to its new slot
+            let moved_key = self.entry_arena[old_tail_ind].key.clone();
+            self.index.insert(moved_key, old_tail_ind);
+
+            // Fix head/tail pointers if they referred to the moved slot
+            if self.head == Some(last_ind) {
+                self.head = Some(old_tail_ind);
+            }
+            if self.tail == Some(last_ind) {
+                self.tail = Some(old_tail_ind);
+            }
         }
 
         self.entry_arena.pop()
@@ -161,8 +179,10 @@ where
             node_ind = *ind;
         } else {
             while self.entry_arena.len() >= self.entry_arena.capacity() {
-                while let Some(cache_entry) = self.evict() {
+                if let Some(cache_entry) = self.evict() {
                     evicted_entries.push((cache_entry.key, cache_entry.value));
+                } else {
+                    break;
                 }
             }
 
@@ -290,5 +310,80 @@ mod lru_cache_tests {
 
         assert!(cache.get(&(ITERATIONS - 1)).is_some());
         assert!(cache.len() == CAPACITY);
+    }
+
+    #[test]
+    fn len_and_capacity() {
+        const CAPACITY: usize = 10;
+        let mut cache = LruCache::new(CAPACITY);
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.capacity(), CAPACITY);
+
+        cache.insert(1, "a");
+        cache.insert(2, "b");
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.capacity(), CAPACITY);
+    }
+
+    #[test]
+    fn insert_duplicate_updates_value() {
+        let mut cache = LruCache::new(4);
+        cache.insert("key", 1);
+        cache.insert("key", 2);
+
+        // Should still be only 1 entry
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.get(&"key"), Some(&2));
+    }
+
+    #[test]
+    fn contains_key_works() {
+        let mut cache = LruCache::new(4);
+        cache.insert("hello", 42);
+
+        assert!(cache.contains_key(&"hello"));
+        assert!(!cache.contains_key(&"world"));
+    }
+
+    #[test]
+    fn update_modifies_value() {
+        let mut cache = LruCache::new(4);
+        cache.insert("key", 1);
+        cache.update(&"key", 99);
+
+        assert_eq!(cache.get(&"key"), Some(&99));
+    }
+
+    #[test]
+    fn get_promotes_to_front_preventing_eviction() {
+        // With capacity 2: insert A, insert B (A is now LRU tail).
+        // Access A to promote it to head. Insert C — B should be evicted, not A.
+        let mut cache = LruCache::new(2);
+        cache.insert("a", 1);
+        cache.insert("b", 2);
+
+        // Access "a" so it becomes the most-recently-used
+        let _ = cache.get(&"a");
+
+        // Insert "c" — should evict "b" (LRU), keeping "a"
+        cache.insert("c", 3);
+
+        assert!(cache.contains_key(&"a"), "a should not be evicted");
+        assert!(!cache.contains_key(&"b"), "b should have been evicted");
+        assert!(cache.contains_key(&"c"), "c should be present");
+    }
+
+    #[test]
+    fn iterator_covers_all_items() {
+        let mut cache = LruCache::new(4);
+        cache.insert(1, "one");
+        cache.insert(2, "two");
+        cache.insert(3, "three");
+
+        let keys: Vec<i32> = (&cache).into_iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys.len(), 3);
+        assert!(keys.contains(&1));
+        assert!(keys.contains(&2));
+        assert!(keys.contains(&3));
     }
 }

@@ -116,4 +116,27 @@ mod tests {
         assert!(content.contains("root_hash"));
         assert!(content.contains("nodes"));
     }
+
+    #[test]
+    fn test_write_msgpack_file() {
+        let mut store = NodeStore::new();
+        let root_hash = parse_markdown("# Test\n\nHello!", &mut store).unwrap();
+        let doc = CasDocument::new(&store, root_hash).unwrap();
+
+        let file = NamedTempFile::new().unwrap();
+        write_msgpack_file(&doc, file.path()).unwrap();
+
+        // The written bytes should be valid MessagePack that round-trips correctly
+        let bytes = std::fs::read(file.path()).unwrap();
+        assert!(!bytes.is_empty());
+        let recovered = CasDocument::from_msgpack(&bytes).unwrap();
+        assert_eq!(doc.root_hash, recovered.root_hash);
+        assert_eq!(doc.nodes.len(), recovered.nodes.len());
+    }
+
+    #[test]
+    fn test_parse_markdown_file_not_found() {
+        let result = parse_markdown_file(std::path::Path::new("/nonexistent/path/file.md"));
+        assert!(result.is_err());
+    }
 }

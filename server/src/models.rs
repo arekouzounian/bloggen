@@ -137,3 +137,84 @@ mod nodes_serde {
         Ok(result)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bgc_ast::{AstNode, Blake3Hash};
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_blake3_serde_roundtrip() {
+        // Wrap a hash in a struct that uses the blake3_serde module
+        #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+        struct Wrapper {
+            #[serde(with = "blake3_serde")]
+            hash: Blake3Hash,
+        }
+
+        let original = Wrapper {
+            hash: Blake3Hash::new([0xab; 32]),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        // The hash should appear as a hex string in JSON
+        assert!(json.contains('"'));
+        let recovered: Wrapper = serde_json::from_str(&json).unwrap();
+        assert_eq!(original.hash.as_bytes(), recovered.hash.as_bytes());
+    }
+
+    #[test]
+    fn test_blake3_serde_invalid_hex() {
+        // Deserialization should fail for a non-hex value
+        #[derive(serde::Deserialize, Debug)]
+        struct Wrapper {
+            #[serde(with = "blake3_serde")]
+            hash: Blake3Hash,
+        }
+
+        let bad_json = r#"{"hash": "not-valid-hex"}"#;
+        assert!(serde_json::from_str::<Wrapper>(bad_json).is_err());
+    }
+
+    #[test]
+    fn test_nodes_serde_roundtrip() {
+        // Wrap a nodes map in a struct that uses nodes_serde
+        #[derive(serde::Serialize, serde::Deserialize, Debug)]
+        struct Wrapper {
+            #[serde(with = "nodes_serde")]
+            nodes: HashMap<Blake3Hash, AstNode>,
+        }
+
+        let mut map = HashMap::new();
+        let hash = Blake3Hash::new([0x01; 32]);
+        let node = AstNode::Text {
+            value: "hello".to_string(),
+        };
+        map.insert(hash, node.clone());
+
+        let original = Wrapper { nodes: map };
+        let json = serde_json::to_string(&original).unwrap();
+        let recovered: Wrapper = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(recovered.nodes.len(), 1);
+        assert!(recovered.nodes.contains_key(&hash));
+        let recovered_node = &recovered.nodes[&hash];
+        assert_eq!(recovered_node, &node);
+    }
+
+    #[test]
+    fn test_nodes_serde_empty_map() {
+        #[derive(serde::Serialize, serde::Deserialize, Debug)]
+        struct Wrapper {
+            #[serde(with = "nodes_serde")]
+            nodes: HashMap<Blake3Hash, AstNode>,
+        }
+
+        let original = Wrapper {
+            nodes: HashMap::new(),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let recovered: Wrapper = serde_json::from_str(&json).unwrap();
+        assert!(recovered.nodes.is_empty());
+    }
+}
