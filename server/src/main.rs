@@ -1,9 +1,11 @@
 use axum::{
+    http::HeaderValue,
     routing::{delete, get, post},
     Router,
 };
 use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc};
+use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use server::{config::Config, db::Database, handlers};
 
@@ -26,6 +28,7 @@ async fn main() -> anyhow::Result<()> {
                     min_connections: 2,
                 },
                 logging: Default::default(),
+                cors: Default::default(),
             }
         });
 
@@ -77,6 +80,29 @@ async fn main() -> anyhow::Result<()> {
     let db = Arc::new(Database::new(pool));
 
     // Build application with all endpoints
+    let cors = if config.cors.allow_any_origin {
+        tracing::warn!(
+            "CORS is configured to allow all origins. \
+             Set cors.allow_any_origin=false and list cors.allowed_origins in config.json for production."
+        );
+        CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
+    } else {
+        let origins: Vec<HeaderValue> = config
+            .cors
+            .allowed_origins
+            .iter()
+            .filter_map(|o| o.parse().ok())
+            .collect();
+        tracing::info!("CORS allowed origins: {:?}", config.cors.allowed_origins);
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
+    };
+
     let app = Router::new()
         .route("/health", get(handlers::health))
         // MessagePack endpoints (primary)
@@ -93,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/posts/:slug/html", get(handlers::get_post_html))
         .route("/posts/:slug/markdown", get(handlers::get_post_markdown))
         .route("/posts/:slug", delete(handlers::delete_post))
+        .layer(cors)
         .with_state(db);
 
     // Start server

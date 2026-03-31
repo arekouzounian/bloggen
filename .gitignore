@@ -9,3 +9,8 @@ initial-posts/
 # Commit if using offline mode for CI/CD (recommended)
 # See server/SQLX-SETUP.md for details
 # **/.sqlx/
+
+# Node.js / Next.js
+**/node_modules/
+frontend/.next/
+frontend/out/

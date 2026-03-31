@@ -7,6 +7,8 @@ pub struct Config {
     pub database: DatabaseConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
+    #[serde(default)]
+    pub cors: CorsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +41,28 @@ impl Default for LoggingConfig {
         Self {
             level: default_log_level(),
             json: false,
+        }
+    }
+}
+
+/// CORS configuration for the HTTP server
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorsConfig {
+    /// Whether to allow all origins (useful for development).
+    /// Set to false in production and list specific origins in `allowed_origins`.
+    #[serde(default)]
+    pub allow_any_origin: bool,
+    /// Explicit list of allowed origins (used when `allow_any_origin` is false).
+    /// Example: ["https://myblog.example.com"]
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+}
+
+impl Default for CorsConfig {
+    fn default() -> Self {
+        Self {
+            allow_any_origin: true,
+            allowed_origins: vec![],
         }
     }
 }
@@ -160,5 +184,31 @@ mod tests {
 
         let result = Config::from_file(temp_file.path());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cors_defaults_to_allow_any_origin() {
+        let config_json = r#"{
+            "server": {},
+            "database": { "url": "postgres://localhost/test" }
+        }"#;
+        let config: Config = serde_json::from_str(config_json).unwrap();
+        assert!(config.cors.allow_any_origin, "Default CORS should allow any origin");
+        assert!(config.cors.allowed_origins.is_empty());
+    }
+
+    #[test]
+    fn test_cors_restricted_origins() {
+        let config_json = r#"{
+            "server": {},
+            "database": { "url": "postgres://localhost/test" },
+            "cors": {
+                "allow_any_origin": false,
+                "allowed_origins": ["https://myblog.example.com"]
+            }
+        }"#;
+        let config: Config = serde_json::from_str(config_json).unwrap();
+        assert!(!config.cors.allow_any_origin);
+        assert_eq!(config.cors.allowed_origins, ["https://myblog.example.com"]);
     }
 }
